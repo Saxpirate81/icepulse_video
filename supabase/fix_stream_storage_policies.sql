@@ -25,7 +25,7 @@ TO authenticated
 WITH CHECK (bucket_id = 'videos');
 
 -- Allow authenticated users to SELECT (view) all videos
-CREATE POLICY IF NOT EXISTS "Allow authenticated users to view videos"
+CREATE POLICY IF NOT EXISTS "Allow authenticated users to view all videos"
 ON storage.objects
 FOR SELECT
 TO authenticated
@@ -37,6 +37,3 @@ ON storage.objects
 FOR DELETE
 TO authenticated
 USING (bucket_id = 'videos');
-
--- Drop old policies if they exist and are too restrictive
-DROP POLICY IF EXISTS "Allow authenticated users to view videos" ON storage.objects;
