@@ -17,15 +17,28 @@ function AppContent() {
   const [streamId, setStreamId] = useState(null)
 
   // Check if we're on a streaming route (no auth required)
+  // Do this immediately, before auth loading
   useEffect(() => {
-    const path = window.location.pathname
-    const match = path.match(/^\/stream\/([a-zA-Z0-9_-]+)$/)
-    if (match) {
-      setStreamId(match[1])
+    const checkStreamRoute = () => {
+      const path = window.location.pathname
+      const match = path.match(/^\/stream\/([a-zA-Z0-9_-]+)$/)
+      if (match) {
+        setStreamId(match[1])
+      }
+    }
+    
+    // Check immediately
+    checkStreamRoute()
+    
+    // Also listen for popstate events (back/forward navigation)
+    window.addEventListener('popstate', checkStreamRoute)
+    
+    return () => {
+      window.removeEventListener('popstate', checkStreamRoute)
     }
   }, [])
 
-  // If streaming route, show stream viewer (no auth required)
+  // If streaming route, show stream viewer (no auth required - bypass auth check)
   if (streamId) {
     return <StreamViewer streamId={streamId} />
   }
