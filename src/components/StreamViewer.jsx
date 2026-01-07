@@ -64,7 +64,7 @@ function StreamViewer({ streamId }) {
   }, [streamId])
 
   useEffect(() => {
-    // Poll for new chunks every 3 seconds
+    // Poll for new chunks every 1.5 seconds for smoother updates
     const pollForChunks = async () => {
       if (!streamId) return
 
@@ -88,10 +88,8 @@ function StreamViewer({ streamId }) {
             console.log('🔴 Stream is now LIVE!')
           }
           
-          // Only update chunks and play if we have new chunks
-          const hasNewChunks = data.length > chunks.length || 
-            chunks.length === 0 || 
-            data.some((chunk, idx) => chunk.id !== chunks[idx]?.id)
+          // Always update chunks if we have new ones (more frequent updates = smoother)
+          const hasNewChunks = data.length > chunks.length || chunks.length === 0
           
           if (hasNewChunks) {
             setChunks(data)
@@ -103,8 +101,8 @@ function StreamViewer({ streamId }) {
       }
     }
 
-    // Poll regardless of isLive status (to detect when stream starts)
-    pollIntervalRef.current = setInterval(pollForChunks, 3000)
+    // Poll more frequently for smoother streaming
+    pollIntervalRef.current = setInterval(pollForChunks, 1500)
     pollForChunks() // Initial load
 
     return () => {
@@ -112,12 +110,38 @@ function StreamViewer({ streamId }) {
         clearInterval(pollIntervalRef.current)
       }
     }
-  }, [streamId, isLive])
+  }, [streamId, isLive, chunks.length])
 
   const playChunks = async (chunkList) => {
     if (!videoRef.current || chunkList.length === 0) return
 
     const video = videoRef.current
+
+    // Preload next chunk while current is playing
+    const preloadNextChunk = async (index) => {
+      if (index >= chunkList.length) return null
+
+      const nextChunk = chunkList[index]
+      if (!nextChunk?.video_url) return null
+
+      try {
+        const { data } = supabase.storage
+          .from('videos')
+          .getPublicUrl(nextChunk.video_url.replace(/^videos\//, ''))
+
+        if (data?.publicUrl) {
+          // Preload the next video
+          const preloadVideo = document.createElement('video')
+          preloadVideo.preload = 'auto'
+          preloadVideo.src = data.publicUrl
+          preloadVideo.load()
+          return data.publicUrl
+        }
+      } catch (err) {
+        console.warn('Error preloading chunk:', err)
+      }
+      return null
+    }
 
     // Play chunks sequentially starting from current index
     const playNextChunk = async (index) => {
@@ -143,54 +167,72 @@ function StreamViewer({ streamId }) {
         if (data?.publicUrl) {
           console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`)
           
+          // Preload next chunk while this one plays
+          if (index + 1 < chunkList.length) {
+            preloadNextChunk(index + 1)
+          }
+          
           // Set video source
           video.src = data.publicUrl
-          video.load()
           
-          // Wait for video to be ready, then play
-          const playPromise = video.play()
+          // Wait for video metadata to load (ensures smooth transition)
+          const canPlay = new Promise((resolve, reject) => {
+            const onCanPlay = () => {
+              video.removeEventListener('canplay', onCanPlay)
+              video.removeEventListener('error', reject)
+              resolve()
+            }
+            video.addEventListener('canplay', onCanPlay, { once: true })
+            video.addEventListener('error', reject, { once: true })
+            video.load()
+            
+            // Fallback timeout
+            setTimeout(() => {
+              video.removeEventListener('canplay', onCanPlay)
+              video.removeEventListener('error', reject)
+              resolve() // Proceed anyway
+            }, 2000)
+          })
           
-          if (playPromise !== undefined) {
-            playPromise
-              .then(() => {
-                console.log(`✅ Chunk ${index + 1} playing`)
-                currentChunkIndex.current = index + 1
-              })
-              .catch(err => {
-                console.warn('Play failed:', err)
-                // Try next chunk if current one fails
-                setTimeout(() => playNextChunk(index + 1), 500)
-              })
+          await canPlay
+          
+          // Play immediately when ready
+          try {
+            await video.play()
+            console.log(`✅ Chunk ${index + 1} playing`)
+            currentChunkIndex.current = index + 1
+          } catch (playErr) {
+            console.warn('Play failed:', playErr)
+            // Try next chunk if current one fails
+            setTimeout(() => playNextChunk(index + 1), 100)
           }
 
-          // When this chunk ends, move to the next one
+          // When this chunk ends, IMMEDIATELY move to the next one (no delay)
           const onEnded = () => {
             video.removeEventListener('ended', onEnded)
-            console.log(`⏭️ Chunk ${index + 1} ended, moving to next`)
-            // Small delay before next chunk for smoother transition
-            setTimeout(() => {
-              playNextChunk(index + 1)
-            }, 200)
+            console.log(`⏭️ Chunk ${index + 1} ended, starting next immediately`)
+            // No delay - immediate transition for smooth playback
+            playNextChunk(index + 1)
           }
 
           video.addEventListener('ended', onEnded, { once: true })
 
-          // Fallback: if video doesn't end naturally after reasonable time, move on
+          // Fallback: if video doesn't end naturally, move on (reduced timeout for smoother flow)
           const fallbackTimeout = setTimeout(() => {
             video.removeEventListener('ended', onEnded)
             if (index + 1 < chunkList.length) {
               console.log(`⏱️ Chunk ${index + 1} timeout, moving to next`)
               playNextChunk(index + 1)
             }
-          }, 15000) // 15 second max per chunk
+          }, 12000) // 12 second max per chunk (chunks are ~10 seconds)
 
           // Clear timeout if video ends naturally
           video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
         }
       } catch (err) {
         console.error('Error playing chunk:', err)
-        // Try next chunk on error
-        setTimeout(() => playNextChunk(index + 1), 500)
+        // Try next chunk on error with minimal delay
+        setTimeout(() => playNextChunk(index + 1), 100)
       }
     }
 
