@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { OrgProvider } from './context/OrgContext'
 import { IndividualProvider } from './context/IndividualContext'
@@ -8,10 +9,26 @@ import ViewToggle from './components/ViewToggle'
 import UserSelector from './components/UserSelector'
 import OrganizationalDashboard from './components/OrganizationalDashboard'
 import IndividualDashboard from './components/IndividualDashboard'
+import StreamViewer from './components/StreamViewer'
 import { isTestingEnabled } from './utils/testing'
 
 function AppContent() {
   const { user, isLoading } = useAuth()
+  const [streamId, setStreamId] = useState(null)
+
+  // Check if we're on a streaming route (no auth required)
+  useEffect(() => {
+    const path = window.location.pathname
+    const match = path.match(/^\/stream\/([a-zA-Z0-9_-]+)$/)
+    if (match) {
+      setStreamId(match[1])
+    }
+  }, [])
+
+  // If streaming route, show stream viewer (no auth required)
+  if (streamId) {
+    return <StreamViewer streamId={streamId} />
+  }
 
   if (isLoading) {
     return (

@@ -1887,6 +1887,100 @@ export function OrgProvider({ children }) {
     }
   }
 
+  // Create a new stream
+  const createStream = async (gameId) => {
+    if (!user?.id || !organization?.id || USE_MOCK) {
+      // Generate a mock stream ID
+      const mockId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      return { id: mockId, streamUrl: `${window.location.origin}/stream/${mockId}` }
+    }
+
+    try {
+      // Generate a unique stream ID
+      const streamId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      
+      const { data, error } = await supabase
+        .from('icepulse_streams')
+        .insert({
+          id: streamId,
+          game_id: gameId,
+          created_by: user.id,
+          is_active: true
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const streamUrl = `${window.location.origin}/stream/${streamId}`
+      return { id: streamId, streamUrl, data }
+    } catch (error) {
+      console.error('Error creating stream:', error)
+      throw error
+    }
+  }
+
+  // Upload a stream chunk
+  const uploadStreamChunk = async (videoBlob, streamId, chunkIndex) => {
+    if (!user?.id || !organization?.id || USE_MOCK) {
+      return { chunkUrl: `mock://chunk-${chunkIndex}.webm` }
+    }
+
+    try {
+      // Upload chunk to storage
+      const fileName = `streams/${streamId}/chunk-${chunkIndex}-${Date.now()}.webm`
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('videos')
+        .upload(fileName, videoBlob, {
+          contentType: 'video/webm',
+          cacheControl: '3600',
+          upsert: false
+        })
+
+      if (uploadError) throw uploadError
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('videos')
+        .getPublicUrl(fileName)
+
+      // Save chunk metadata
+      const { error: chunkError } = await supabase
+        .from('icepulse_stream_chunks')
+        .insert({
+          stream_id: streamId,
+          chunk_index: chunkIndex,
+          video_url: fileName,
+          file_size_bytes: videoBlob.size
+        })
+
+      if (chunkError) throw chunkError
+
+      return { chunkUrl: urlData.publicUrl, fileName }
+    } catch (error) {
+      console.error('Error uploading stream chunk:', error)
+      throw error
+    }
+  }
+
+  // Stop/deactivate a stream
+  const stopStream = async (streamId) => {
+    if (!user?.id || USE_MOCK) return
+
+    try {
+      const { error } = await supabase
+        .from('icepulse_streams')
+        .update({ is_active: false })
+        .eq('id', streamId)
+        .eq('created_by', user.id)
+
+      if (error) throw error
+    } catch (error) {
+      console.error('Error stopping stream:', error)
+      throw error
+    }
+  }
+
   // Get all videos for a game
   const getGameVideos = async (gameId) => {
     if (!gameId) return []
@@ -2095,6 +2189,9 @@ export function OrgProvider({ children }) {
     getGameVideos,
     uploadVideoToStorage,
     uploadThumbnailToStorage,
+    createStream,
+    uploadStreamChunk,
+    stopStream,
     isLoading,
     databaseError,
     clearDatabaseError: () => setDatabaseError(null),

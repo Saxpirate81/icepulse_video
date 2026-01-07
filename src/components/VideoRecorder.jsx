@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Video, Square, Upload, CheckCircle, Clock, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell } from 'lucide-react'
+import { Video, Square, Upload, CheckCircle, Clock, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell, Copy, Share2, Check } from 'lucide-react'
 import Dropdown from './Dropdown'
 import { useAuth } from '../context/AuthContext'
 import { useOrgOptional } from '../context/OrgContext'
@@ -11,6 +11,9 @@ function VideoRecorder() {
   const addGame = orgContext?.addGame || null
   const uploadVideoToStorage = orgContext?.uploadVideoToStorage || null
   const uploadThumbnailToStorage = orgContext?.uploadThumbnailToStorage || null
+  const createStream = orgContext?.createStream || null
+  const uploadStreamChunk = orgContext?.uploadStreamChunk || null
+  const stopStream = orgContext?.stopStream || null
   const { user } = useAuth()
   const [isRecording, setIsRecording] = useState(false)
   const [chunks, setChunks] = useState([])
@@ -47,6 +50,12 @@ function VideoRecorder() {
   const recordedBlobsRef = useRef([])
   const currentGameIdRef = useRef(null) // Store gameId for the current recording session
   const currentStartTimestampRef = useRef(null) // Store start timestamp for the current recording session
+  const [streamId, setStreamId] = useState(null)
+  const [streamUrl, setStreamUrl] = useState(null)
+  const [urlCopied, setUrlCopied] = useState(false)
+  const streamChunkIndexRef = useRef(0)
+  const streamChunkIntervalRef = useRef(null)
+  const streamChunksRef = useRef([]) // Store chunks for streaming
 
   const getAvailableCameras = async () => {
     try {
@@ -287,6 +296,20 @@ function VideoRecorder() {
       currentGameIdRef.current = eventExistingGameId
       const g = organization?.games?.find(x => x.id === eventExistingGameId)
       setEventSummary(g ? computeEventLabelFromGame(g) : 'Game selected')
+      
+      // Create stream for this game
+      if (createStream) {
+        try {
+          const streamData = await createStream(eventExistingGameId)
+          setStreamId(streamData.id)
+          setStreamUrl(streamData.streamUrl)
+          console.log('✅ Stream created:', streamData)
+        } catch (err) {
+          console.error('Error creating stream:', err)
+          // Don't block recording if stream creation fails
+        }
+      }
+      
       setShowEventModal(false)
       console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
       return true
@@ -337,6 +360,20 @@ function VideoRecorder() {
       setSelectedGameId(created.id)
       currentGameIdRef.current = created.id
       setEventSummary(`${eventType === 'game' ? 'Game' : eventType === 'practice' ? 'Practice' : 'Skills'} — ${created.gameDate} ${created.gameTime || ''}`.trim())
+      
+      // Create stream for this game
+      if (createStream) {
+        try {
+          const streamData = await createStream(created.id)
+          setStreamId(streamData.id)
+          setStreamUrl(streamData.streamUrl)
+          console.log('✅ Stream created:', streamData)
+        } catch (err) {
+          console.error('Error creating stream:', err)
+          // Don't block recording if stream creation fails
+        }
+      }
+      
       setShowEventModal(false)
       console.log('✅ Event created and gameId set:', created.id)
       return true
@@ -382,6 +419,8 @@ function VideoRecorder() {
     setRecordingStartTimestamp(startTimestamp)
     currentStartTimestampRef.current = startTimestamp // Store in ref immediately
     recordedBlobsRef.current = [] // Reset recorded blobs
+    streamChunksRef.current = [] // Reset stream chunks
+    streamChunkIndexRef.current = 0 // Reset chunk index
     console.log('⏰ Start timestamp set:', startTimestamp)
 
     const mediaRecorder = new MediaRecorder(stream, {
@@ -390,12 +429,31 @@ function VideoRecorder() {
 
     mediaRecorderRef.current = mediaRecorder
 
-    mediaRecorder.ondataavailable = (event) => {
+    mediaRecorder.ondataavailable = async (event) => {
       if (event.data && event.data.size > 0) {
         // Store blob for final video
         recordedBlobsRef.current.push(event.data)
         
-        // Simulate chunk upload
+        // Store chunk for streaming
+        const chunkBlob = event.data
+        streamChunksRef.current.push(chunkBlob)
+        
+        // Upload chunk for streaming if stream is active
+        if (streamId && uploadStreamChunk && streamChunksRef.current.length > 0) {
+          const chunkIndex = streamChunkIndexRef.current++
+          const chunkToUpload = streamChunksRef.current.shift() // Remove first chunk from queue
+          
+          try {
+            await uploadStreamChunk(chunkToUpload, streamId, chunkIndex)
+            console.log(`📤 Stream chunk ${chunkIndex} uploaded`)
+          } catch (err) {
+            console.error('Error uploading stream chunk:', err)
+            // Re-add chunk to queue on failure
+            streamChunksRef.current.unshift(chunkToUpload)
+          }
+        }
+        
+        // Update UI chunk display
         const chunkId = Date.now() + Math.random()
         const newChunk = {
           id: chunkId,
@@ -405,7 +463,7 @@ function VideoRecorder() {
         }
         setChunks((prev) => [...prev, newChunk])
 
-        // Simulate upload completion after 1-3 seconds
+        // Simulate upload completion after 1-3 seconds (for UI only)
         setTimeout(() => {
           setChunks((prev) =>
             prev.map((chunk) =>
@@ -419,6 +477,36 @@ function VideoRecorder() {
     }
 
     mediaRecorder.onstop = async () => {
+      // Stop stream chunk interval
+      if (streamChunkIntervalRef.current) {
+        clearInterval(streamChunkIntervalRef.current)
+        streamChunkIntervalRef.current = null
+      }
+      
+      // Upload any remaining stream chunks
+      if (streamId && uploadStreamChunk && streamChunksRef.current.length > 0) {
+        while (streamChunksRef.current.length > 0) {
+          const chunkToUpload = streamChunksRef.current.shift()
+          const chunkIndex = streamChunkIndexRef.current++
+          try {
+            await uploadStreamChunk(chunkToUpload, streamId, chunkIndex)
+            console.log(`📤 Final stream chunk ${chunkIndex} uploaded`)
+          } catch (err) {
+            console.error('Error uploading final stream chunk:', err)
+          }
+        }
+      }
+      
+      // Stop the stream
+      if (streamId && stopStream) {
+        try {
+          await stopStream(streamId)
+          console.log('🛑 Stream stopped')
+        } catch (err) {
+          console.error('Error stopping stream:', err)
+        }
+      }
+      
       // Create final video blob
       const finalBlob = new Blob(recordedBlobsRef.current, { type: 'video/webm' })
       
@@ -457,16 +545,16 @@ function VideoRecorder() {
       currentStartTimestampRef.current = null
     }
 
-    mediaRecorder.start(1000) // Collect data every second
+    mediaRecorder.start(10000) // Collect data every 10 seconds for streaming
     setIsRecording(true)
     isRecordingRef.current = true
 
-    // Simulate periodic chunk creation
+    // Request data every 10 seconds for streaming chunks
     chunkIntervalRef.current = setInterval(() => {
       if (mediaRecorder.state === 'recording') {
         mediaRecorder.requestData()
       }
-    }, 2000)
+    }, 10000)
 
     // Request fullscreen when recording starts - use the container div
     if (videoContainerRef.current) {
@@ -895,6 +983,73 @@ function VideoRecorder() {
                           className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Stream URL Section */}
+                {streamUrl && (
+                  <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border border-blue-700/50 rounded-lg p-4 space-y-3">
+                    <div>
+                      <label className="block text-blue-300 font-semibold mb-2 text-sm">
+                        🔴 Live Stream URL
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={streamUrl}
+                          readOnly
+                          className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
+                          onClick={(e) => e.target.select()}
+                        />
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(streamUrl)
+                            setUrlCopied(true)
+                            setTimeout(() => setUrlCopied(false), 2000)
+                          }}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
+                          title="Copy URL"
+                        >
+                          {urlCopied ? (
+                            <>
+                              <Check className="w-4 h-4" />
+                              <span className="hidden sm:inline">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span className="hidden sm:inline">Copy</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            const message = `Watch the live stream: ${streamUrl}`
+                            if (navigator.share) {
+                              navigator.share({
+                                title: 'Live Stream',
+                                text: message,
+                                url: streamUrl
+                              }).catch(() => {
+                                // Fallback to SMS
+                                window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
+                              })
+                            } else {
+                              // Fallback to SMS
+                              window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
+                            }
+                          }}
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
+                          title="Share via SMS/Message"
+                        >
+                          <Share2 className="w-4 h-4" />
+                          <span className="hidden sm:inline">Share</span>
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-2">
+                        Share this URL with viewers - no login required to watch!
+                      </p>
                     </div>
                   </div>
                 )}
