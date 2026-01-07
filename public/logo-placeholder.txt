@@ -1,0 +1,11 @@
+Please place your logo image file here as "logo.png"
+
+The logo should be:
+- Square format (recommended: 512x512px or larger)
+- PNG format with transparency (or JPG if no transparency needed)
+- Named exactly "logo.png"
+
+The app will automatically:
+- Display it with a flash animation on initial load
+- Show it on the login/welcome screen
+- Flash it again when logging out

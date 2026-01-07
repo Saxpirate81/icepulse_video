@@ -1,0 +1,107 @@
+import { AuthProvider, useAuth } from './context/AuthContext'
+import { OrgProvider } from './context/OrgContext'
+import { IndividualProvider } from './context/IndividualContext'
+import VideoRecorder from './components/VideoRecorder'
+import WelcomeScreen from './components/WelcomeScreen'
+import AccountMenu from './components/AccountMenu'
+import ViewToggle from './components/ViewToggle'
+import UserSelector from './components/UserSelector'
+import OrganizationalDashboard from './components/OrganizationalDashboard'
+import IndividualDashboard from './components/IndividualDashboard'
+import { isTestingEnabled } from './utils/testing'
+
+function AppContent() {
+  const { user, isLoading } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <WelcomeScreen />
+  }
+
+  // Show different dashboard based on account type and role
+  // Organization role sees Organizational Dashboard
+  if (user.role === 'organization' || (user.type === 'organization' && !user.role)) {
+    return (
+      <OrgProvider>
+        <div className="min-h-screen bg-gray-900">
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+            <ViewToggle />
+            <UserSelector />
+            <AccountMenu />
+          </div>
+          <OrganizationalDashboard />
+        </div>
+      </OrgProvider>
+    )
+  }
+
+  // Coach role sees Coach Dashboard (team view)
+  if (user.role === 'coach') {
+    return (
+      <OrgProvider>
+        <div className="min-h-screen bg-gray-900">
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+            <ViewToggle />
+            <UserSelector />
+            <AccountMenu />
+          </div>
+          <OrganizationalDashboard />
+        </div>
+      </OrgProvider>
+    )
+  }
+
+  // Individual account (Player, Parent, Game Recorder, or default individual)
+  // For testing mode, wrap in OrgProvider so UserSelector can access organization data
+  const USE_TESTING = isTestingEnabled()
+  const isTestingRole = user.role === 'player' || user.role === 'parent'
+  
+  // If testing mode and player/parent role, use OrgProvider so UserSelector works
+  if (USE_TESTING && isTestingRole) {
+    return (
+      <OrgProvider>
+        <IndividualProvider>
+          <div className="min-h-screen bg-gray-900">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+              <ViewToggle />
+              <UserSelector />
+              <AccountMenu />
+            </div>
+            <IndividualDashboard />
+          </div>
+        </IndividualProvider>
+      </OrgProvider>
+    )
+  }
+  
+  // Normal mode or non-testing roles
+  return (
+    <IndividualProvider>
+      <div className="min-h-screen bg-gray-900">
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+          <ViewToggle />
+          <UserSelector />
+          <AccountMenu />
+        </div>
+        <IndividualDashboard />
+      </div>
+    </IndividualProvider>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  )
+}
+
+export default App
