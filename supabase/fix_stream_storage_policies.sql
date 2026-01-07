@@ -1,0 +1,42 @@
+-- Fix Storage Policies for Public Stream Access
+-- This allows anyone to view stream videos without authentication
+
+-- First, ensure the videos bucket is public
+UPDATE storage.buckets 
+SET public = true 
+WHERE id = 'videos';
+
+-- Allow PUBLIC (anyone) to SELECT (view) videos in streams folder
+-- This is needed so stream viewers can watch without logging in
+CREATE POLICY IF NOT EXISTS "Allow public to view stream videos"
+ON storage.objects
+FOR SELECT
+TO public
+USING (
+  bucket_id = 'videos' 
+  AND (storage.foldername(name))[1] = 'streams'
+);
+
+-- Allow authenticated users to INSERT (upload) videos anywhere
+CREATE POLICY IF NOT EXISTS "Allow authenticated users to upload videos"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (bucket_id = 'videos');
+
+-- Allow authenticated users to SELECT (view) all videos
+CREATE POLICY IF NOT EXISTS "Allow authenticated users to view videos"
+ON storage.objects
+FOR SELECT
+TO authenticated
+USING (bucket_id = 'videos');
+
+-- Allow authenticated users to DELETE their own videos (optional)
+CREATE POLICY IF NOT EXISTS "Allow users to delete their own videos"
+ON storage.objects
+FOR DELETE
+TO authenticated
+USING (bucket_id = 'videos');
+
+-- Drop old policies if they exist and are too restrictive
+DROP POLICY IF EXISTS "Allow authenticated users to view videos" ON storage.objects;
