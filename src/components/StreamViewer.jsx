@@ -82,12 +82,21 @@ function StreamViewer({ streamId }) {
         }
 
         if (data && data.length > 0) {
-          setChunks(data)
           // Update live status if we have chunks
           if (data.length > 0 && !isLive) {
             setIsLive(true)
+            console.log('🔴 Stream is now LIVE!')
           }
-          playChunks(data)
+          
+          // Only update chunks and play if we have new chunks
+          const hasNewChunks = data.length > chunks.length || 
+            chunks.length === 0 || 
+            data.some((chunk, idx) => chunk.id !== chunks[idx]?.id)
+          
+          if (hasNewChunks) {
+            setChunks(data)
+            playChunks(data)
+          }
         }
       } catch (err) {
         console.error('Error polling chunks:', err)
@@ -108,51 +117,88 @@ function StreamViewer({ streamId }) {
   const playChunks = async (chunkList) => {
     if (!videoRef.current || chunkList.length === 0) return
 
-    // Play chunks sequentially
+    const video = videoRef.current
+
+    // Play chunks sequentially starting from current index
     const playNextChunk = async (index) => {
       if (index >= chunkList.length) {
-        // Wait for new chunks
+        // Reached the end of available chunks - wait for more
+        console.log('⏸️ Reached end of available chunks, waiting for more...')
         return
       }
 
       const chunk = chunkList[index]
-      if (chunk.video_url) {
-        try {
-          // Get public URL from Supabase Storage
-          const { data } = supabase.storage
-            .from('videos')
-            .getPublicUrl(chunk.video_url.replace('videos/', ''))
+      if (!chunk.video_url) {
+        // Skip invalid chunks
+        playNextChunk(index + 1)
+        return
+      }
 
-          if (data?.publicUrl) {
-            const video = videoRef.current
-            const source = document.createElement('source')
-            source.src = data.publicUrl
-            source.type = 'video/webm'
+      try {
+        // Get public URL from Supabase Storage
+        const { data } = supabase.storage
+          .from('videos')
+          .getPublicUrl(chunk.video_url.replace(/^videos\//, ''))
 
-            // Clear existing sources
-            while (video.firstChild) {
-              video.removeChild(video.firstChild)
-            }
-            video.appendChild(source)
-            
-            video.load()
-            video.play().catch(err => console.warn('Play failed:', err))
+        if (data?.publicUrl) {
+          console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`)
+          
+          // Set video source
+          video.src = data.publicUrl
+          video.load()
+          
+          // Wait for video to be ready, then play
+          const playPromise = video.play()
+          
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                console.log(`✅ Chunk ${index + 1} playing`)
+                currentChunkIndex.current = index + 1
+              })
+              .catch(err => {
+                console.warn('Play failed:', err)
+                // Try next chunk if current one fails
+                setTimeout(() => playNextChunk(index + 1), 500)
+              })
+          }
 
-            // Wait for chunk duration or move to next
+          // When this chunk ends, move to the next one
+          const onEnded = () => {
+            video.removeEventListener('ended', onEnded)
+            console.log(`⏭️ Chunk ${index + 1} ended, moving to next`)
+            // Small delay before next chunk for smoother transition
             setTimeout(() => {
               playNextChunk(index + 1)
-            }, 10000) // 10 second chunks
+            }, 200)
           }
-        } catch (err) {
-          console.error('Error playing chunk:', err)
+
+          video.addEventListener('ended', onEnded, { once: true })
+
+          // Fallback: if video doesn't end naturally after reasonable time, move on
+          const fallbackTimeout = setTimeout(() => {
+            video.removeEventListener('ended', onEnded)
+            if (index + 1 < chunkList.length) {
+              console.log(`⏱️ Chunk ${index + 1} timeout, moving to next`)
+              playNextChunk(index + 1)
+            }
+          }, 15000) // 15 second max per chunk
+
+          // Clear timeout if video ends naturally
+          video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
         }
+      } catch (err) {
+        console.error('Error playing chunk:', err)
+        // Try next chunk on error
+        setTimeout(() => playNextChunk(index + 1), 500)
       }
     }
 
-    // Start from current index
+    // Only start playing if we have new chunks to play
     if (currentChunkIndex.current < chunkList.length) {
-      playNextChunk(currentChunkIndex.current)
-      currentChunkIndex.current = chunkList.length
+      const startIndex = currentChunkIndex.current
+      console.log(`🎬 Starting playback from chunk ${startIndex + 1}`)
+      playNextChunk(startIndex)
     }
   }
 
@@ -232,6 +278,8 @@ function StreamViewer({ streamId }) {
           muted={false}
           controls
           controlsList="nodownload"
+          preload="auto"
+          crossOrigin="anonymous"
         />
         {chunks.length === 0 && !isLive && (
           <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-950 to-black">
