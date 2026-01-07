@@ -160,79 +160,143 @@ function StreamViewer({ streamId }) {
 
       try {
         // Get public URL from Supabase Storage
+        // Handle both cases: path with or without 'videos/' prefix
+        let filePath = chunk.video_url
+        if (filePath.startsWith('videos/')) {
+          filePath = filePath.replace(/^videos\//, '')
+        }
+        
         const { data } = supabase.storage
           .from('videos')
-          .getPublicUrl(chunk.video_url.replace(/^videos\//, ''))
+          .getPublicUrl(filePath)
 
-        if (data?.publicUrl) {
-          console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`)
-          
-          // Preload next chunk while this one plays
-          if (index + 1 < chunkList.length) {
-            preloadNextChunk(index + 1)
-          }
-          
-          // Set video source
-          video.src = data.publicUrl
-          
-          // Wait for video metadata to load (ensures smooth transition)
-          const canPlay = new Promise((resolve, reject) => {
-            const onCanPlay = () => {
-              video.removeEventListener('canplay', onCanPlay)
-              video.removeEventListener('error', reject)
-              resolve()
-            }
-            video.addEventListener('canplay', onCanPlay, { once: true })
-            video.addEventListener('error', reject, { once: true })
-            video.load()
-            
-            // Fallback timeout
-            setTimeout(() => {
-              video.removeEventListener('canplay', onCanPlay)
-              video.removeEventListener('error', reject)
-              resolve() // Proceed anyway
-            }, 2000)
+        if (!data?.publicUrl) {
+          console.error(`❌ No public URL for chunk ${index + 1}:`, chunk.video_url)
+          setTimeout(() => playNextChunk(index + 1), 500)
+          return
+        }
+
+        console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`, data.publicUrl)
+        
+        // Preload next chunk while this one plays
+        if (index + 1 < chunkList.length) {
+          preloadNextChunk(index + 1)
+        }
+        
+        // Clear any previous error handlers
+        video.onerror = null
+        
+        // Set up error handler BEFORE setting src
+        let hasErrored = false
+        const errorHandler = (err) => {
+          if (hasErrored) return
+          hasErrored = true
+          console.error(`❌ Video error for chunk ${index + 1}:`, {
+            error: err,
+            url: data.publicUrl,
+            path: chunk.video_url,
+            videoError: video.error
           })
-          
-          await canPlay
-          
-          // Play immediately when ready
-          try {
-            await video.play()
-            console.log(`✅ Chunk ${index + 1} playing`)
-            currentChunkIndex.current = index + 1
-          } catch (playErr) {
-            console.warn('Play failed:', playErr)
-            // Try next chunk if current one fails
-            setTimeout(() => playNextChunk(index + 1), 100)
+          video.removeEventListener('error', errorHandler)
+          // Try next chunk after short delay
+          setTimeout(() => {
+            playNextChunk(index + 1)
+          }, 500)
+        }
+        
+        video.addEventListener('error', errorHandler, { once: true })
+        
+        // Set video source
+        video.src = data.publicUrl
+        
+        // Wait for video metadata to load
+        const canPlay = new Promise((resolve, reject) => {
+          const cleanup = () => {
+            video.removeEventListener('canplay', onCanPlay)
+            video.removeEventListener('loadeddata', onLoadedData)
+            video.removeEventListener('error', onError)
           }
+          
+          const onCanPlay = () => {
+            cleanup()
+            resolve()
+          }
+          
+          const onLoadedData = () => {
+            cleanup()
+            resolve()
+          }
+          
+          const onError = (err) => {
+            cleanup()
+            reject(err)
+          }
+          
+          video.addEventListener('canplay', onCanPlay, { once: true })
+          video.addEventListener('loadeddata', onLoadedData, { once: true })
+          video.addEventListener('error', onError, { once: true })
+          video.load()
+          
+          // Fallback timeout
+          setTimeout(() => {
+            cleanup()
+            // If video loaded but events didn't fire, proceed anyway
+            if (video.readyState >= 2) {
+              resolve()
+            } else {
+              reject(new Error('Video load timeout'))
+            }
+          }, 3000)
+        })
+        
+        try {
+          await canPlay
+        } catch (loadErr) {
+          console.error(`❌ Failed to load chunk ${index + 1}:`, loadErr)
+          video.removeEventListener('error', errorHandler)
+          setTimeout(() => playNextChunk(index + 1), 500)
+          return
+        }
+        
+        // Remove error handler if we got here (video loaded successfully)
+        video.removeEventListener('error', errorHandler)
+        
+        // Play immediately when ready
+        try {
+          await video.play()
+          console.log(`✅ Chunk ${index + 1} playing`)
+          currentChunkIndex.current = index + 1
+        } catch (playErr) {
+          console.warn(`⚠️ Play failed for chunk ${index + 1}:`, playErr)
+          // Try next chunk if current one fails
+          setTimeout(() => playNextChunk(index + 1), 500)
+          return
+        }
 
-          // When this chunk ends, IMMEDIATELY move to the next one (no delay)
-          const onEnded = () => {
-            video.removeEventListener('ended', onEnded)
-            console.log(`⏭️ Chunk ${index + 1} ended, starting next immediately`)
-            // No delay - immediate transition for smooth playback
+        // When this chunk ends, IMMEDIATELY move to the next one (no delay)
+        const onEnded = () => {
+          video.removeEventListener('ended', onEnded)
+          console.log(`⏭️ Chunk ${index + 1} ended, starting next immediately`)
+          playNextChunk(index + 1)
+        }
+
+        video.addEventListener('ended', onEnded, { once: true })
+
+        // Fallback: if video doesn't end naturally, move on
+        const fallbackTimeout = setTimeout(() => {
+          video.removeEventListener('ended', onEnded)
+          if (index + 1 < chunkList.length) {
+            console.log(`⏱️ Chunk ${index + 1} timeout, moving to next`)
             playNextChunk(index + 1)
           }
+        }, 8000) // 8 second max per chunk (chunks are ~5 seconds)
 
-          video.addEventListener('ended', onEnded, { once: true })
-
-          // Fallback: if video doesn't end naturally, move on (reduced timeout for smoother flow)
-          const fallbackTimeout = setTimeout(() => {
-            video.removeEventListener('ended', onEnded)
-            if (index + 1 < chunkList.length) {
-              console.log(`⏱️ Chunk ${index + 1} timeout, moving to next`)
-              playNextChunk(index + 1)
-            }
-          }, 12000) // 12 second max per chunk (chunks are ~10 seconds)
-
-          // Clear timeout if video ends naturally
-          video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
-        }
+        // Clear timeout if video ends naturally
+        video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
       } catch (err) {
-        console.error('Error playing chunk:', err)
-        // Try next chunk on error with minimal delay
-        setTimeout(() => playNextChunk(index + 1), 100)
+        console.error(`❌ Error playing chunk ${index + 1}:`, err)
+        // Try next chunk on error
+        setTimeout(() => playNextChunk(index + 1), 500)
       }
     }
 
