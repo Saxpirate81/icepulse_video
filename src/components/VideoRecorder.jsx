@@ -300,17 +300,30 @@ function VideoRecorder() {
       // Create stream for this game
       if (createStream) {
         try {
+          console.log('🔄 Creating stream for game:', eventExistingGameId)
           const streamData = await createStream(eventExistingGameId)
-          setStreamId(streamData.id)
-          setStreamUrl(streamData.streamUrl)
           console.log('✅ Stream created:', streamData)
+          if (streamData?.id && streamData?.streamUrl) {
+            setStreamId(streamData.id)
+            setStreamUrl(streamData.streamUrl)
+            console.log('✅ Stream URL set:', streamData.streamUrl)
+          } else {
+            console.error('❌ Stream data incomplete:', streamData)
+            setError('Stream created but URL not available. You can still record.')
+            setShowEventModal(false)
+          }
+          // Keep modal open so user can see/copy the stream URL
         } catch (err) {
-          console.error('Error creating stream:', err)
-          // Don't block recording if stream creation fails
+          console.error('❌ Error creating stream:', err)
+          setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
+          // Still close modal to allow recording
+          setShowEventModal(false)
         }
+      } else {
+        console.warn('⚠️ createStream function not available from OrgContext')
+        setError('Streaming not available. Recording will still work.')
+        setShowEventModal(false)
       }
-      
-      setShowEventModal(false)
       console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
       return true
     }
@@ -364,17 +377,30 @@ function VideoRecorder() {
       // Create stream for this game
       if (createStream) {
         try {
+          console.log('🔄 Creating stream for new game:', created.id)
           const streamData = await createStream(created.id)
-          setStreamId(streamData.id)
-          setStreamUrl(streamData.streamUrl)
           console.log('✅ Stream created:', streamData)
+          if (streamData?.id && streamData?.streamUrl) {
+            setStreamId(streamData.id)
+            setStreamUrl(streamData.streamUrl)
+            console.log('✅ Stream URL set:', streamData.streamUrl)
+          } else {
+            console.error('❌ Stream data incomplete:', streamData)
+            setError('Stream created but URL not available. You can still record.')
+            setShowEventModal(false)
+          }
+          // Keep modal open so user can see/copy the stream URL
         } catch (err) {
-          console.error('Error creating stream:', err)
-          // Don't block recording if stream creation fails
+          console.error('❌ Error creating stream:', err)
+          setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
+          // Still close modal to allow recording
+          setShowEventModal(false)
         }
+      } else {
+        console.warn('⚠️ createStream function not available from OrgContext')
+        setError('Streaming not available. Recording will still work.')
+        setShowEventModal(false)
       }
-      
-      setShowEventModal(false)
       console.log('✅ Event created and gameId set:', created.id)
       return true
     } catch (e) {
@@ -1067,18 +1093,31 @@ function VideoRecorder() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setShowEventModal(false)}
+                    onClick={() => {
+                      setShowEventModal(false)
+                      // If stream URL exists, we still allow closing to proceed to recording
+                    }}
                     className="px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800"
                   >
-                    Cancel
+                    {streamUrl ? 'Start Recording' : 'Cancel'}
                   </button>
-                  <button
-                    onClick={ensureEventSelected}
-                    disabled={isCreatingEvent}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
-                  >
-                    {isCreatingEvent ? 'Saving…' : 'Continue'}
-                  </button>
+                  {!streamUrl && (
+                    <button
+                      onClick={ensureEventSelected}
+                      disabled={isCreatingEvent}
+                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+                    >
+                      {isCreatingEvent ? 'Saving…' : 'Continue'}
+                    </button>
+                  )}
+                  {streamUrl && (
+                    <button
+                      onClick={() => setShowEventModal(false)}
+                      className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 font-semibold"
+                    >
+                      Start Recording
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
