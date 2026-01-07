@@ -646,10 +646,10 @@ function VideoRecorder() {
 
         {/* Event Setup Modal */}
         {showEventModal && !isRecording && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-70 p-4">
-            <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-xl shadow-2xl">
-              <div className="flex items-center justify-between p-4 border-b border-gray-800">
-                <div>
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-70 p-2 sm:p-4 overflow-y-auto">
+            <div className="w-full max-w-xl max-h-[95vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col my-auto">
+              <div className="flex items-center justify-between p-4 border-b border-gray-800 flex-shrink-0">
+                <div className="min-w-0 pr-2">
                   <h2 className="text-lg font-semibold">What are you recording?</h2>
                   <p className="text-sm text-gray-400">
                     Choose an event type before recording so the clip is categorized correctly.
@@ -657,14 +657,14 @@ function VideoRecorder() {
                 </div>
                 <button
                   onClick={() => setShowEventModal(false)}
-                  className="p-2 rounded-lg hover:bg-gray-800 text-gray-300"
+                  className="p-2 rounded-lg hover:bg-gray-800 text-gray-300 flex-shrink-0"
                   title="Close"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-4 space-y-4">
+              <div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     type="button"
@@ -906,7 +906,7 @@ function VideoRecorder() {
                 )}
               </div>
 
-              <div className="p-4 border-t border-gray-800 flex items-center justify-between gap-3">
+              <div className="p-4 border-t border-gray-800 flex items-center justify-between gap-3 flex-shrink-0">
                 <div className="text-xs text-gray-500">
                   Tip: You can change this later from the Recorder screen.
                 </div>
