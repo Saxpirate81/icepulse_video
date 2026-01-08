@@ -1927,8 +1927,15 @@ export function OrgProvider({ children }) {
     }
 
     try {
+      // Validate blob before upload
+      if (!videoBlob || videoBlob.size === 0) {
+        throw new Error('Invalid video blob - empty or null')
+      }
+
       // Upload chunk to storage
       const fileName = `streams/${streamId}/chunk-${chunkIndex}-${Date.now()}.webm`
+      console.log(`📤 Uploading chunk ${chunkIndex} (${Math.round(videoBlob.size / 1024)}KB)...`)
+      
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('videos')
         .upload(fileName, videoBlob, {
@@ -1937,12 +1944,33 @@ export function OrgProvider({ children }) {
           upsert: false
         })
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        console.error(`❌ Upload failed for chunk ${chunkIndex}:`, uploadError)
+        throw uploadError
+      }
+
+      console.log(`✅ Upload complete for chunk ${chunkIndex}`)
 
       // Get public URL
       const { data: urlData } = supabase.storage
         .from('videos')
         .getPublicUrl(fileName)
+
+      // Small delay to ensure file is processed by Supabase
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Verify file is accessible (HEAD request)
+      try {
+        const response = await fetch(urlData.publicUrl, { method: 'HEAD' })
+        if (!response.ok && response.status !== 200) {
+          console.warn(`⚠️ Chunk ${chunkIndex} not immediately accessible (${response.status}), but continuing...`)
+        } else {
+          console.log(`✅ Chunk ${chunkIndex} verified accessible`)
+        }
+      } catch (verifyErr) {
+        console.warn(`⚠️ Could not verify chunk ${chunkIndex} accessibility:`, verifyErr)
+        // Continue anyway - might be a CORS issue but file could still work
+      }
 
       // Save chunk metadata
       const { error: chunkError } = await supabase
@@ -1954,11 +1982,15 @@ export function OrgProvider({ children }) {
           file_size_bytes: videoBlob.size
         })
 
-      if (chunkError) throw chunkError
+      if (chunkError) {
+        console.error(`❌ Database insert failed for chunk ${chunkIndex}:`, chunkError)
+        throw chunkError
+      }
 
+      console.log(`✅ Chunk ${chunkIndex} saved to database`)
       return { chunkUrl: urlData.publicUrl, fileName }
     } catch (error) {
-      console.error('Error uploading stream chunk:', error)
+      console.error(`❌ Error uploading stream chunk ${chunkIndex}:`, error)
       throw error
     }
   }

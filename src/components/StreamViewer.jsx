@@ -227,12 +227,22 @@ function StreamViewer({ streamId }) {
           const errorCode = videoError?.code || 'unknown'
           const errorMessage = videoError?.message || 'Unknown error'
           
+          // MediaError codes: 1=MEDIA_ERR_ABORTED, 2=MEDIA_ERR_NETWORK, 3=MEDIA_ERR_DECODE, 4=MEDIA_ERR_SRC_NOT_SUPPORTED
+          const errorCodeNames = {
+            1: 'MEDIA_ERR_ABORTED',
+            2: 'MEDIA_ERR_NETWORK', 
+            3: 'MEDIA_ERR_DECODE',
+            4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+          }
+          
           console.error(`❌ Video error for chunk ${index + 1} (attempt ${retryCount}/${MAX_RETRIES_PER_CHUNK}):`, {
             error: err,
             url: data.publicUrl,
             path: chunk.video_url,
-            errorCode,
-            errorMessage
+            errorCode: `${errorCode} (${errorCodeNames[errorCode] || 'unknown'})`,
+            errorMessage,
+            readyState: video.readyState,
+            networkState: video.networkState
           })
           
           video.removeEventListener('error', errorHandler)
