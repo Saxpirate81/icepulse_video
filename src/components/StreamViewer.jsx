@@ -134,6 +134,9 @@ function StreamViewer({ streamId }) {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current)
       }
+      if (waitingCheckIntervalRef.current) {
+        clearInterval(waitingCheckIntervalRef.current)
+      }
     }
   }, [streamId, isLive, chunks.length])
 
