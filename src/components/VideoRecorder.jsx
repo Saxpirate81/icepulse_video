@@ -56,6 +56,7 @@ function VideoRecorder() {
   const streamChunkIndexRef = useRef(0)
   const streamChunkIntervalRef = useRef(null)
   const streamChunksRef = useRef([]) // Store chunks for streaming
+  const isSegmentStopRef = useRef(false) // Track if stop is for segment (streaming) vs final stop
 
   const getAvailableCameras = async () => {
     try {
@@ -460,22 +461,17 @@ function VideoRecorder() {
         // Store blob for final video
         recordedBlobsRef.current.push(event.data)
         
-        // Store chunk for streaming
-        const chunkBlob = event.data
-        streamChunksRef.current.push(chunkBlob)
-        
-        // Upload chunk for streaming if stream is active
-        if (streamId && uploadStreamChunk && streamChunksRef.current.length > 0) {
+        // If this is a segment stop (streaming), upload the complete segment immediately
+        if (isSegmentStopRef.current && streamId && uploadStreamChunk) {
           const chunkIndex = streamChunkIndexRef.current++
-          const chunkToUpload = streamChunksRef.current.shift() // Remove first chunk from queue
+          const chunkBlob = event.data // This is a complete, playable WebM segment
           
           try {
-            await uploadStreamChunk(chunkToUpload, streamId, chunkIndex)
-            console.log(`📤 Stream chunk ${chunkIndex} uploaded`)
+            console.log(`📤 Uploading complete segment ${chunkIndex} (${Math.round(chunkBlob.size / 1024)}KB)...`)
+            await uploadStreamChunk(chunkBlob, streamId, chunkIndex)
+            console.log(`✅ Stream segment ${chunkIndex} uploaded successfully`)
           } catch (err) {
-            console.error('Error uploading stream chunk:', err)
-            // Re-add chunk to queue on failure
-            streamChunksRef.current.unshift(chunkToUpload)
+            console.error(`❌ Error uploading stream segment ${chunkIndex}:`, err)
           }
         }
         
@@ -503,24 +499,22 @@ function VideoRecorder() {
     }
 
     mediaRecorder.onstop = async () => {
+      const wasSegmentStop = isSegmentStopRef.current
+      isSegmentStopRef.current = false // Reset for next time
+      
+      // If this was just a segment stop (for streaming), don't do final save yet
+      if (wasSegmentStop) {
+        console.log('🔄 Segment stopped for streaming - continuing recording...')
+        return // The interval handler will restart recording
+      }
+      
+      // Final stop - user stopped recording
+      console.log('🛑 Final recording stop')
+      
       // Stop stream chunk interval
       if (streamChunkIntervalRef.current) {
         clearInterval(streamChunkIntervalRef.current)
         streamChunkIntervalRef.current = null
-      }
-      
-      // Upload any remaining stream chunks
-      if (streamId && uploadStreamChunk && streamChunksRef.current.length > 0) {
-        while (streamChunksRef.current.length > 0) {
-          const chunkToUpload = streamChunksRef.current.shift()
-          const chunkIndex = streamChunkIndexRef.current++
-          try {
-            await uploadStreamChunk(chunkToUpload, streamId, chunkIndex)
-            console.log(`📤 Final stream chunk ${chunkIndex} uploaded`)
-          } catch (err) {
-            console.error('Error uploading final stream chunk:', err)
-          }
-        }
       }
       
       // Stop the stream
@@ -572,16 +566,48 @@ function VideoRecorder() {
     }
 
     // Use 7 second intervals - gives more time for upload and smoother playback
-    mediaRecorder.start(7000)
+    // For streaming, we'll record complete segments (stop/restart) instead of fragments
+    // This ensures each chunk is a complete, playable WebM file
+    const SEGMENT_DURATION = 10000 // 10 seconds per complete segment
+    
+    mediaRecorder.start() // Start without timeslice - record complete segments
     setIsRecording(true)
     isRecordingRef.current = true
 
-    // Request data every 7 seconds for streaming chunks (more upload time = smoother)
-    chunkIntervalRef.current = setInterval(() => {
-      if (mediaRecorder.state === 'recording') {
-        mediaRecorder.requestData()
+    // Create complete segments every 10 seconds for streaming
+    // We stop/restart the recorder to ensure each chunk is a complete, playable file
+    streamChunkIntervalRef.current = setInterval(async () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try {
+          // Mark this as a segment stop (not final stop)
+          isSegmentStopRef.current = true
+          
+          // Stop current recording to finalize the segment
+          mediaRecorderRef.current.stop()
+          
+          // Wait for onstop/ondataavailable to complete
+          await new Promise(resolve => setTimeout(resolve, 500))
+          
+          // Restart recording for next segment (if still recording)
+          if (isRecordingRef.current && streamRef.current) {
+            const newRecorder = new MediaRecorder(streamRef.current, {
+              mimeType: 'video/webm;codecs=vp8,opus',
+            })
+            
+            // Set up handlers (same handlers)
+            newRecorder.ondataavailable = mediaRecorderRef.current.ondataavailable
+            newRecorder.onstop = mediaRecorderRef.current.onstop
+            
+            mediaRecorderRef.current = newRecorder
+            newRecorder.start()
+            console.log(`🎬 Restarted recording for next segment`)
+          }
+        } catch (err) {
+          console.error('❌ Error restarting recorder for streaming:', err)
+          isSegmentStopRef.current = false
+        }
       }
-    }, 7000)
+    }, SEGMENT_DURATION)
 
     // Request fullscreen when recording starts - use the container div
     if (videoContainerRef.current) {
