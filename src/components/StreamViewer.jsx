@@ -352,28 +352,37 @@ function StreamViewer({ streamId }) {
           return
         }
 
-        // When this chunk ends, IMMEDIATELY move to the next one (no delay)
+        // When this chunk ends, move to the next with small delay for smooth transition
         const onEnded = () => {
+          clearTimeout(fallbackTimeout)
           video.removeEventListener('ended', onEnded)
-          console.log(`⏭️ Chunk ${index + 1} ended, starting next immediately`)
-          playNextChunk(index + 1)
+          // Small delay (50ms) for smoother transition
+          setTimeout(() => {
+            if (index + 1 < chunkList.length) {
+              console.log(`⏭️ Chunk ${index + 1} ended, moving to chunk ${index + 2}`)
+              playNextChunk(index + 1)
+            } else {
+              // Wait for more chunks - will be handled by polling
+              console.log('⏸️ Reached end, waiting for more chunks...')
+            }
+          }, 50)
         }
 
         video.addEventListener('ended', onEnded, { once: true })
 
-          // Fallback: if video doesn't end naturally, move on
-          // Use actual video duration if available, or default to 7 seconds
-          const estimatedDuration = video.duration && video.duration > 0 
-            ? (video.duration * 1000) + 1000 // Add 1 second buffer
-            : 7000 // Default 7 seconds for 5-second chunks
-            
-          const fallbackTimeout = setTimeout(() => {
-            video.removeEventListener('ended', onEnded)
-            if (index + 1 < chunkList.length) {
-              console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
-              playNextChunk(index + 1)
-            }
-          }, estimatedDuration)
+        // Fallback: if video doesn't end naturally, move on
+        // Use actual video duration if available, or default to 10 seconds (segment duration)
+        const estimatedDuration = video.duration && video.duration > 0 
+          ? (video.duration * 1000) + 200 // Add 200ms buffer
+          : 10200 // Default 10.2 seconds for 10-second segments
+          
+        const fallbackTimeout = setTimeout(() => {
+          video.removeEventListener('ended', onEnded)
+          if (index + 1 < chunkList.length) {
+            console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
+            playNextChunk(index + 1)
+          }
+        }, estimatedDuration)
 
         // Clear timeout if video ends naturally
         video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
