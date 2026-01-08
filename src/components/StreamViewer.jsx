@@ -406,7 +406,7 @@ function StreamViewer({ streamId }) {
           preload="auto"
           crossOrigin="anonymous"
         />
-        {chunks.length === 0 && (
+        {(!hasStartedPlaying.current || chunks.length === 0) && (
           <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-950 to-black">
             <div className="text-center px-4">
               <div className="relative mb-6">
@@ -416,9 +416,15 @@ function StreamViewer({ streamId }) {
                 </div>
               </div>
               <h2 className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-green-400 via-green-300 to-green-400 bg-clip-text text-transparent mb-2">
-                Going Live Soon...
+                {chunks.length === 0 
+                  ? 'Going Live Soon...' 
+                  : `Buffering... (${chunks.length}/${BUFFER_CHUNKS})`}
               </h2>
-              <p className="text-gray-400 text-sm sm:text-base">The broadcast will begin in just a moment</p>
+              <p className="text-gray-400 text-sm sm:text-base">
+                {chunks.length === 0 
+                  ? 'The broadcast will begin in just a moment'
+                  : `Getting ready for smooth playback (${Math.max(0, BUFFER_CHUNKS - chunks.length)} more needed)`}
+              </p>
             </div>
           </div>
         )}
