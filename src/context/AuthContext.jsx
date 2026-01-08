@@ -43,9 +43,9 @@ export function AuthProvider({ children }) {
         unsubscribe: () => {}
       }
     } else {
-      // Normal mode: Get initial session with timeout
+      // Normal mode: Get initial session with timeout (increased for slow connections)
       const sessionTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session check timeout')), 8000)
+        setTimeout(() => reject(new Error('Session check timeout')), 20000)
       )
       
       Promise.race([
@@ -101,8 +101,8 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  // Helper function to add timeout to a promise
-  const withTimeout = (promise, timeoutMs = 8000) => {
+  // Helper function to add timeout to a promise (increased for slow connections)
+  const withTimeout = (promise, timeoutMs = 15000) => {
     return Promise.race([
       promise,
       new Promise((_, reject) => 

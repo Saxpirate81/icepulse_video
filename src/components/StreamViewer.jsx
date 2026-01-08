@@ -11,7 +11,10 @@ function StreamViewer({ streamId }) {
   const currentChunkIndex = useRef(0)
   const pollIntervalRef = useRef(null)
   const hasStartedPlaying = useRef(false)
-  const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (10-15 second buffer)
+  const failedChunks = useRef(new Set()) // Track chunks that have failed
+  const chunkRetryCount = useRef(new Map()) // Track retry attempts per chunk
+  const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (14+ second buffer)
+  const MAX_RETRIES_PER_CHUNK = 2 // Max retries before giving up on a chunk
 
   useEffect(() => {
     // Load stream metadata
@@ -165,6 +168,16 @@ function StreamViewer({ streamId }) {
       const chunk = chunkList[index]
       if (!chunk.video_url) {
         // Skip invalid chunks
+        setTimeout(() => playNextChunk(index + 1), 500)
+        return
+      }
+
+      // Skip chunks that have failed too many times
+      const chunkKey = `${chunk.id || chunk.chunk_index || index}`
+      const retryCount = chunkRetryCount.current.get(chunkKey) || 0
+      if (retryCount >= MAX_RETRIES_PER_CHUNK) {
+        console.warn(`⏭️ Skipping chunk ${index + 1} - failed ${retryCount} times`)
+        failedChunks.current.add(chunkKey)
         setTimeout(() => playNextChunk(index + 1), 200)
         return
       }
@@ -205,17 +218,37 @@ function StreamViewer({ streamId }) {
         const errorHandler = (err) => {
           if (hasErrored) return
           hasErrored = true
-          console.error(`❌ Video error for chunk ${index + 1}:`, {
+          
+          // Increment retry count for this chunk
+          const retryCount = (chunkRetryCount.current.get(chunkKey) || 0) + 1
+          chunkRetryCount.current.set(chunkKey, retryCount)
+          
+          const videoError = video.error
+          const errorCode = videoError?.code || 'unknown'
+          const errorMessage = videoError?.message || 'Unknown error'
+          
+          console.error(`❌ Video error for chunk ${index + 1} (attempt ${retryCount}/${MAX_RETRIES_PER_CHUNK}):`, {
             error: err,
             url: data.publicUrl,
             path: chunk.video_url,
-            videoError: video.error
+            errorCode,
+            errorMessage
           })
+          
           video.removeEventListener('error', errorHandler)
-          // Try next chunk after short delay
-          setTimeout(() => {
-            playNextChunk(index + 1)
-          }, 500)
+          
+          // If we've retried too many times, skip to next chunk
+          if (retryCount >= MAX_RETRIES_PER_CHUNK) {
+            console.warn(`⏭️ Giving up on chunk ${index + 1} after ${retryCount} failures`)
+            failedChunks.current.add(chunkKey)
+            setTimeout(() => playNextChunk(index + 1), 300)
+          } else {
+            // Retry this chunk after a longer delay (wait for upload to complete)
+            console.log(`🔄 Retrying chunk ${index + 1} in 2 seconds...`)
+            setTimeout(() => {
+              playNextChunk(index)
+            }, 2000)
+          }
         }
         
         video.addEventListener('error', errorHandler, { once: true })
@@ -251,7 +284,7 @@ function StreamViewer({ streamId }) {
           video.addEventListener('error', onError, { once: true })
           video.load()
           
-          // Fallback timeout
+          // Fallback timeout (increased for slow uploads)
           setTimeout(() => {
             cleanup()
             // If video loaded but events didn't fire, proceed anyway
@@ -260,15 +293,31 @@ function StreamViewer({ streamId }) {
             } else {
               reject(new Error('Video load timeout'))
             }
-          }, 3000)
+          }, 7000) // 7 seconds - allows time for chunk uploads to complete
         })
         
         try {
           await canPlay
         } catch (loadErr) {
-          console.error(`❌ Failed to load chunk ${index + 1}:`, loadErr)
+          // Increment retry count
+          const retryCount = (chunkRetryCount.current.get(chunkKey) || 0) + 1
+          chunkRetryCount.current.set(chunkKey, retryCount)
+          
+          console.error(`❌ Failed to load chunk ${index + 1} (attempt ${retryCount}/${MAX_RETRIES_PER_CHUNK}):`, loadErr)
           video.removeEventListener('error', errorHandler)
-          setTimeout(() => playNextChunk(index + 1), 500)
+          
+          // If we've retried too many times, skip to next chunk
+          if (retryCount >= MAX_RETRIES_PER_CHUNK) {
+            console.warn(`⏭️ Giving up on chunk ${index + 1} after ${retryCount} load failures`)
+            failedChunks.current.add(chunkKey)
+            setTimeout(() => playNextChunk(index + 1), 300)
+          } else {
+            // Retry after waiting longer (chunk might still be uploading)
+            console.log(`🔄 Retrying chunk ${index + 1} load in 2 seconds...`)
+            setTimeout(() => {
+              playNextChunk(index)
+            }, 2000)
+          }
           return
         }
         
