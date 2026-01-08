@@ -501,7 +501,8 @@ function StreamViewer({ streamId }) {
           autoPlay
           playsInline
           muted={true}
-          controls={false}
+          controls
+          controlsList="nodownload"
           preload="auto"
           crossOrigin="anonymous"
         />
