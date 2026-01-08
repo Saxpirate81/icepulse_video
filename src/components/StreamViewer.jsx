@@ -7,12 +7,15 @@ function StreamViewer({ streamId }) {
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
   const [chunks, setChunks] = useState([])
+  const [isWaitingForChunks, setIsWaitingForChunks] = useState(false)
   const videoRef = useRef(null)
   const currentChunkIndex = useRef(0)
   const pollIntervalRef = useRef(null)
   const hasStartedPlaying = useRef(false)
   const failedChunks = useRef(new Set()) // Track chunks that have failed
   const chunkRetryCount = useRef(new Map()) // Track retry attempts per chunk
+  const nextChunkPreloadRef = useRef(null) // Preload next chunk for seamless transition
+  const waitingCheckIntervalRef = useRef(null) // Interval to check for new chunks when waiting
   const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (14+ second buffer)
   const MAX_RETRIES_PER_CHUNK = 2 // Max retries before giving up on a chunk
 
@@ -139,7 +142,7 @@ function StreamViewer({ streamId }) {
 
     const video = videoRef.current
 
-    // Preload next chunk while current is playing
+    // Preload next chunk for seamless transition
     const preloadNextChunk = async (index, currentChunks) => {
       if (index >= currentChunks.length) return null
 
@@ -147,16 +150,28 @@ function StreamViewer({ streamId }) {
       if (!nextChunk?.video_url) return null
 
       try {
+        let filePath = nextChunk.video_url
+        if (filePath.startsWith('videos/')) {
+          filePath = filePath.replace(/^videos\//, '')
+        }
+        
         const { data } = supabase.storage
           .from('videos')
-          .getPublicUrl(nextChunk.video_url.replace(/^videos\//, ''))
+          .getPublicUrl(filePath)
 
         if (data?.publicUrl) {
-          // Preload the next video
+          // Preload the next video element for seamless switching
+          if (nextChunkPreloadRef.current) {
+            nextChunkPreloadRef.current.src = ''
+            nextChunkPreloadRef.current.load()
+          }
+          
           const preloadVideo = document.createElement('video')
           preloadVideo.preload = 'auto'
+          preloadVideo.muted = true
           preloadVideo.src = data.publicUrl
           preloadVideo.load()
+          nextChunkPreloadRef.current = preloadVideo
           return data.publicUrl
         }
       } catch (err) {
@@ -172,29 +187,45 @@ function StreamViewer({ streamId }) {
       const currentChunks = chunks.length > 0 ? chunks : chunkList
       
       if (index >= currentChunks.length) {
-        // Reached the end of available chunks - wait for more
+        // Reached the end of available chunks - show waiting message
         console.log(`⏸️ Reached end (chunk ${index + 1}), waiting for more... (have ${currentChunks.length} chunks)`)
-        // Check again in 500ms for new chunks
-        setTimeout(() => {
-          const updatedChunks = chunks.length > 0 ? chunks : chunkList
-          if (updatedChunks.length > index) {
+        setIsWaitingForChunks(true)
+        
+        // Clear any existing waiting check interval
+        if (waitingCheckIntervalRef.current) {
+          clearInterval(waitingCheckIntervalRef.current)
+        }
+        
+        // Check for new chunks every 500ms
+        waitingCheckIntervalRef.current = setInterval(() => {
+          const latestChunks = chunks.length > 0 ? chunks : chunkList
+          if (latestChunks.length > index) {
+            clearInterval(waitingCheckIntervalRef.current)
+            waitingCheckIntervalRef.current = null
+            setIsWaitingForChunks(false)
             console.log(`📥 New chunks arrived! Continuing from chunk ${index + 1}`)
             playNextChunk(index)
-          } else {
-            // Keep checking every 500ms
-            const checkInterval = setInterval(() => {
-              const latestChunks = chunks.length > 0 ? chunks : chunkList
-              if (latestChunks.length > index) {
-                clearInterval(checkInterval)
-                console.log(`📥 New chunks arrived! Continuing from chunk ${index + 1}`)
-                playNextChunk(index)
-              }
-            }, 500)
-            // Stop checking after 5 minutes (stream likely ended)
-            setTimeout(() => clearInterval(checkInterval), 300000)
           }
         }, 500)
+        
+        // Stop checking after 5 minutes (stream likely ended)
+        setTimeout(() => {
+          if (waitingCheckIntervalRef.current) {
+            clearInterval(waitingCheckIntervalRef.current)
+            waitingCheckIntervalRef.current = null
+          }
+        }, 300000)
+        
         return
+      }
+      
+      // If we were waiting and now have chunks, hide waiting message
+      if (isWaitingForChunks) {
+        setIsWaitingForChunks(false)
+        if (waitingCheckIntervalRef.current) {
+          clearInterval(waitingCheckIntervalRef.current)
+          waitingCheckIntervalRef.current = null
+        }
       }
 
       const chunk = currentChunks[index]
@@ -371,6 +402,7 @@ function StreamViewer({ streamId }) {
           await video.play()
           console.log(`✅ Chunk ${index + 1} playing`)
           currentChunkIndex.current = index + 1
+          setIsWaitingForChunks(false) // Hide waiting message when playing
         } catch (playErr) {
           console.warn(`⚠️ Play failed for chunk ${index + 1}:`, playErr)
           // Try next chunk if current one fails
@@ -378,16 +410,28 @@ function StreamViewer({ streamId }) {
           return
         }
 
-        // When this chunk ends, move to the next with small delay for smooth transition
+        // Monitor when chunk is about to end for seamless transition
+        const onTimeUpdate = () => {
+          // When we're 90% through the video, prepare next chunk
+          if (video.duration && video.currentTime > 0 && video.currentTime / video.duration > 0.9) {
+            // Preload next chunk if not already done
+            if (index + 1 < currentChunks.length && !nextChunkPreloadRef.current?.src) {
+              preloadNextChunk(index + 1, currentChunks)
+            }
+          }
+        }
+        
+        video.addEventListener('timeupdate', onTimeUpdate)
+
+        // When this chunk ends, IMMEDIATELY switch to next (seamless transition)
         const onEnded = () => {
           clearTimeout(fallbackTimeout)
           video.removeEventListener('ended', onEnded)
-          // Small delay (50ms) for smoother transition
-          setTimeout(() => {
-            // Always try to play next chunk - playNextChunk will check if it exists
-            console.log(`⏭️ Chunk ${index + 1} ended, moving to next chunk`)
-            playNextChunk(index + 1)
-          }, 50)
+          video.removeEventListener('timeupdate', onTimeUpdate)
+          
+          // Instant transition - no delay for seamless playback
+          console.log(`⏭️ Chunk ${index + 1} ended, seamlessly moving to next`)
+          playNextChunk(index + 1)
         }
 
         video.addEventListener('ended', onEnded, { once: true })
@@ -494,7 +538,7 @@ function StreamViewer({ streamId }) {
       </div>
 
       {/* Video Player - Full Screen */}
-      <div className="w-full h-screen bg-black flex items-center justify-center pt-16 sm:pt-20">
+      <div className="w-full h-screen bg-black flex items-center justify-center pt-16 sm:pt-20 relative">
         <video
           ref={videoRef}
           className="w-full h-full object-contain"
@@ -506,6 +550,26 @@ function StreamViewer({ streamId }) {
           preload="auto"
           crossOrigin="anonymous"
         />
+        
+        {/* "Stream will continue shortly..." overlay */}
+        {isWaitingForChunks && (
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-10">
+            <div className="text-center px-4">
+              <div className="relative mb-6">
+                <Wifi className="w-16 h-16 sm:w-20 sm:h-20 mx-auto text-gray-600 animate-pulse" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 border-2 border-gray-700 border-t-gray-500 rounded-full animate-spin"></div>
+                </div>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">
+                Stream will continue shortly...
+              </h2>
+              <p className="text-gray-400 text-sm sm:text-base">
+                Waiting for next segment
+              </p>
+            </div>
+          </div>
+        )}
         {(!hasStartedPlaying.current || chunks.length === 0) && (
           <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-950 to-black">
             <div className="text-center px-4">
