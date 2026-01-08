@@ -110,8 +110,10 @@ function StreamViewer({ streamId }) {
             hasStartedPlaying.current = true
             playChunks(data)
           } else if (hasStartedPlaying.current && hasNewChunks) {
-            // Only call playChunks if we have new chunks to avoid restarting
-            // The playChunks function will continue from where it left off
+            // New chunks arrived - update the chunks list
+            // playNextChunk will automatically pick up new chunks from state
+            console.log(`📥 New chunks detected (${data.length} total), continuing playback...`)
+            setChunks(data) // Update state so playNextChunk can access new chunks
           } else if (!hasStartedPlaying.current) {
             console.log(`⏳ Buffering: ${data.length}/${BUFFER_CHUNKS} chunks (need ${BUFFER_CHUNKS} to start)`)
           }
@@ -138,10 +140,10 @@ function StreamViewer({ streamId }) {
     const video = videoRef.current
 
     // Preload next chunk while current is playing
-    const preloadNextChunk = async (index) => {
-      if (index >= chunkList.length) return null
+    const preloadNextChunk = async (index, currentChunks) => {
+      if (index >= currentChunks.length) return null
 
-      const nextChunk = chunkList[index]
+      const nextChunk = currentChunks[index]
       if (!nextChunk?.video_url) return null
 
       try {
@@ -164,14 +166,38 @@ function StreamViewer({ streamId }) {
     }
 
     // Play chunks sequentially starting from current index
+    // Use a function that checks current chunks state, not just the initial list
     const playNextChunk = async (index) => {
-      if (index >= chunkList.length) {
+      // Get current chunks from state (they may have been updated)
+      const currentChunks = chunks.length > 0 ? chunks : chunkList
+      
+      if (index >= currentChunks.length) {
         // Reached the end of available chunks - wait for more
-        console.log('⏸️ Reached end of available chunks, waiting for more...')
+        console.log(`⏸️ Reached end (chunk ${index + 1}), waiting for more... (have ${currentChunks.length} chunks)`)
+        // Check again in 500ms for new chunks
+        setTimeout(() => {
+          const updatedChunks = chunks.length > 0 ? chunks : chunkList
+          if (updatedChunks.length > index) {
+            console.log(`📥 New chunks arrived! Continuing from chunk ${index + 1}`)
+            playNextChunk(index)
+          } else {
+            // Keep checking every 500ms
+            const checkInterval = setInterval(() => {
+              const latestChunks = chunks.length > 0 ? chunks : chunkList
+              if (latestChunks.length > index) {
+                clearInterval(checkInterval)
+                console.log(`📥 New chunks arrived! Continuing from chunk ${index + 1}`)
+                playNextChunk(index)
+              }
+            }, 500)
+            // Stop checking after 5 minutes (stream likely ended)
+            setTimeout(() => clearInterval(checkInterval), 300000)
+          }
+        }, 500)
         return
       }
 
-      const chunk = chunkList[index]
+      const chunk = currentChunks[index]
       if (!chunk.video_url) {
         // Skip invalid chunks
         setTimeout(() => playNextChunk(index + 1), 500)
@@ -209,11 +235,11 @@ function StreamViewer({ streamId }) {
         // Note: We'll verify chunk accessibility during video load below
         // If it fails, the error handler will retry
 
-        console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`)
+        console.log(`▶️ Playing chunk ${index + 1}/${currentChunks.length}`)
         
         // Preload next chunk while this one plays
-        if (index + 1 < chunkList.length) {
-          preloadNextChunk(index + 1)
+        if (index + 1 < currentChunks.length) {
+          preloadNextChunk(index + 1, currentChunks)
         }
         
         // Clear any previous error handlers
@@ -358,13 +384,9 @@ function StreamViewer({ streamId }) {
           video.removeEventListener('ended', onEnded)
           // Small delay (50ms) for smoother transition
           setTimeout(() => {
-            if (index + 1 < chunkList.length) {
-              console.log(`⏭️ Chunk ${index + 1} ended, moving to chunk ${index + 2}`)
-              playNextChunk(index + 1)
-            } else {
-              // Wait for more chunks - will be handled by polling
-              console.log('⏸️ Reached end, waiting for more chunks...')
-            }
+            // Always try to play next chunk - playNextChunk will check if it exists
+            console.log(`⏭️ Chunk ${index + 1} ended, moving to next chunk`)
+            playNextChunk(index + 1)
           }, 50)
         }
 
@@ -378,10 +400,9 @@ function StreamViewer({ streamId }) {
           
         const fallbackTimeout = setTimeout(() => {
           video.removeEventListener('ended', onEnded)
-          if (index + 1 < chunkList.length) {
-            console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
-            playNextChunk(index + 1)
-          }
+          // Always try next - playNextChunk will check if it exists
+          console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
+          playNextChunk(index + 1)
         }, estimatedDuration)
 
         // Clear timeout if video ends naturally
