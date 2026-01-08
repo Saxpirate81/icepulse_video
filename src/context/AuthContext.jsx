@@ -54,7 +54,8 @@ export function AuthProvider({ children }) {
       ]).then(({ data: { session } }) => {
         if (session) {
           loadUserProfile(session.user.id).catch((error) => {
-            console.error('Error loading user profile on mount:', error)
+            // Don't log as error - timeout is expected if Supabase is slow
+            console.warn('⚠️ Could not load user profile (Supabase may be slow):', error.message || error)
             setIsLoading(false)
           })
         } else {
