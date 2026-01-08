@@ -61,7 +61,9 @@ export function AuthProvider({ children }) {
           setIsLoading(false)
         }
       }).catch((error) => {
-        console.error('⚠️ Error getting session (may be timeout):', error)
+        // Don't log as error - timeout is expected if Supabase is slow
+        // App can continue without session (e.g., for stream viewing)
+        console.warn('⚠️ Session check failed (Supabase may be slow):', error.message || error)
         setIsLoading(false)
       })
       
@@ -138,8 +140,9 @@ export function AuthProvider({ children }) {
         const { data } = await withTimeout(supabase.auth.getSession())
         session = data?.session
       } catch (timeoutError) {
-        console.error('⚠️ Session check timeout - Supabase may be unavailable:', timeoutError)
+        console.warn('⚠️ Session check timeout - Supabase may be slow. Continuing without session...')
         setIsLoading(false)
+        // Allow app to continue - stream viewing doesn't need auth
         return false
       }
       
@@ -163,8 +166,9 @@ export function AuthProvider({ children }) {
         profile = result.data
         error = result.error
       } catch (timeoutError) {
-        console.error('⚠️ Profile load timeout - Supabase may be unavailable:', timeoutError)
+        console.warn('⚠️ Profile load timeout - Supabase may be slow. Continuing without profile...')
         setIsLoading(false)
+        // Allow app to continue - some features work without profile (e.g., stream viewing)
         return false
       }
 
