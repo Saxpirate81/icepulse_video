@@ -414,11 +414,16 @@ function StreamViewer({ streamId }) {
       }
     }
 
-    // Only start playing if we have new chunks to play
-    if (currentChunkIndex.current < chunkList.length) {
-      const startIndex = currentChunkIndex.current
-      console.log(`🎬 Starting playback from chunk ${startIndex + 1}`)
+    // Start playing from current index (or 0 if just starting)
+    const startIndex = currentChunkIndex.current
+    if (startIndex < chunkList.length) {
+      console.log(`🎬 Starting playback from chunk ${startIndex + 1} of ${chunkList.length}`)
       playNextChunk(startIndex)
+    } else {
+      // Start from beginning if we haven't started yet
+      console.log(`🎬 Starting playback from beginning (chunk 1 of ${chunkList.length})`)
+      currentChunkIndex.current = 0
+      playNextChunk(0)
     }
   }
 
@@ -495,9 +500,8 @@ function StreamViewer({ streamId }) {
           className="w-full h-full object-contain"
           autoPlay
           playsInline
-          muted={false}
-          controls
-          controlsList="nodownload"
+          muted={true}
+          controls={false}
           preload="auto"
           crossOrigin="anonymous"
         />
