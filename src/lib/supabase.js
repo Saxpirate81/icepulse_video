@@ -33,30 +33,13 @@ if (USE_MOCK) {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      flowType: 'pkce',
-      // Don't auto-refresh on mount if it's causing issues
-      // The app will handle session refresh manually if needed
+      flowType: 'pkce'
     }
   })
   
-  // Suppress token refresh errors to prevent console spam
-  // These are non-critical - app can work without fresh tokens
-  const originalOnAuthStateChange = supabase.auth.onAuthStateChange
-  supabase.auth.onAuthStateChange = function(callback) {
-    return originalOnAuthStateChange.call(this, (event, session) => {
-      // Suppress token refresh errors
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-        try {
-          callback(event, session)
-        } catch (err) {
-          // Silently handle token refresh errors
-          console.warn('⚠️ Auth state change error (non-critical):', err.message || err)
-        }
-      } else {
-        callback(event, session)
-      }
-    })
-  }
+  // Note: CORS/522 errors from token refresh are non-critical
+  // The app will continue to work even if token refresh fails
+  // The maximum loading timeout (10s) ensures the app doesn't hang
 }
 
 export { supabase }
