@@ -571,16 +571,17 @@ function VideoRecorder() {
       currentStartTimestampRef.current = null
     }
 
-    mediaRecorder.start(5000) // Collect data every 5 seconds for smoother streaming
+    // Use 7 second intervals - gives more time for upload and smoother playback
+    mediaRecorder.start(7000)
     setIsRecording(true)
     isRecordingRef.current = true
 
-    // Request data every 5 seconds for streaming chunks (smoother playback)
+    // Request data every 7 seconds for streaming chunks (more upload time = smoother)
     chunkIntervalRef.current = setInterval(() => {
       if (mediaRecorder.state === 'recording') {
         mediaRecorder.requestData()
       }
-    }, 5000)
+    }, 7000)
 
     // Request fullscreen when recording starts - use the container div
     if (videoContainerRef.current) {

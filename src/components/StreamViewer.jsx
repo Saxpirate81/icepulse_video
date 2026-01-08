@@ -10,6 +10,8 @@ function StreamViewer({ streamId }) {
   const videoRef = useRef(null)
   const currentChunkIndex = useRef(0)
   const pollIntervalRef = useRef(null)
+  const hasStartedPlaying = useRef(false)
+  const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (10-15 second buffer)
 
   useEffect(() => {
     // Load stream metadata
@@ -88,12 +90,21 @@ function StreamViewer({ streamId }) {
             console.log('🔴 Stream is now LIVE!')
           }
           
-          // Always update chunks if we have new ones (more frequent updates = smoother)
-          const hasNewChunks = data.length > chunks.length || chunks.length === 0
+          // Update chunks always to track available chunks
+          setChunks(data)
           
-          if (hasNewChunks) {
-            setChunks(data)
+          // Only start playing if we have enough chunks buffered OR already started
+          const enoughChunks = data.length >= BUFFER_CHUNKS || hasStartedPlaying.current
+          
+          if (enoughChunks && !hasStartedPlaying.current) {
+            console.log(`📦 Buffer ready: ${data.length} chunks available, starting playback...`)
+            hasStartedPlaying.current = true
             playChunks(data)
+          } else if (hasStartedPlaying.current) {
+            // Continue playing new chunks if we've already started
+            playChunks(data)
+          } else {
+            console.log(`⏳ Buffering: ${data.length}/${BUFFER_CHUNKS} chunks (need ${BUFFER_CHUNKS} to start)`)
           }
         }
       } catch (err) {
@@ -154,7 +165,7 @@ function StreamViewer({ streamId }) {
       const chunk = chunkList[index]
       if (!chunk.video_url) {
         // Skip invalid chunks
-        playNextChunk(index + 1)
+        setTimeout(() => playNextChunk(index + 1), 200)
         return
       }
 
@@ -172,11 +183,14 @@ function StreamViewer({ streamId }) {
 
         if (!data?.publicUrl) {
           console.error(`❌ No public URL for chunk ${index + 1}:`, chunk.video_url)
-          setTimeout(() => playNextChunk(index + 1), 500)
+          setTimeout(() => playNextChunk(index + 1), 1000)
           return
         }
 
-        console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`, data.publicUrl)
+        // Note: We'll verify chunk accessibility during video load below
+        // If it fails, the error handler will retry
+
+        console.log(`▶️ Playing chunk ${index + 1}/${chunkList.length}`)
         
         // Preload next chunk while this one plays
         if (index + 1 < chunkList.length) {
@@ -282,14 +296,19 @@ function StreamViewer({ streamId }) {
 
         video.addEventListener('ended', onEnded, { once: true })
 
-        // Fallback: if video doesn't end naturally, move on
-        const fallbackTimeout = setTimeout(() => {
-          video.removeEventListener('ended', onEnded)
-          if (index + 1 < chunkList.length) {
-            console.log(`⏱️ Chunk ${index + 1} timeout, moving to next`)
-            playNextChunk(index + 1)
-          }
-        }, 8000) // 8 second max per chunk (chunks are ~5 seconds)
+          // Fallback: if video doesn't end naturally, move on
+          // Use actual video duration if available, or default to 7 seconds
+          const estimatedDuration = video.duration && video.duration > 0 
+            ? (video.duration * 1000) + 1000 // Add 1 second buffer
+            : 7000 // Default 7 seconds for 5-second chunks
+            
+          const fallbackTimeout = setTimeout(() => {
+            video.removeEventListener('ended', onEnded)
+            if (index + 1 < chunkList.length) {
+              console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
+              playNextChunk(index + 1)
+            }
+          }, estimatedDuration)
 
         // Clear timeout if video ends naturally
         video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
