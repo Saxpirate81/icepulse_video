@@ -33,33 +33,40 @@ if (USE_MOCK) {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      // Add timeout for auth requests to prevent hanging
       flowType: 'pkce'
     },
     global: {
-      // Add fetch timeout to prevent hanging
-      fetch: (url, options = {}) => {
+      // Add fetch timeout to prevent hanging on slow/unavailable Supabase
+      fetch: async (url, options = {}) => {
         // Create a timeout promise
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Request timeout')), 10000) // 10 second timeout
         })
         
-        // Race the fetch against timeout
-        return Promise.race([
-          fetch(url, options),
-          timeoutPromise
-        ]).catch((error) => {
-          // If it's a timeout or network error, log but don't throw
-          if (error.message === 'Request timeout' || error.name === 'TypeError') {
-            console.warn('⚠️ Supabase request timeout or network error:', url)
-            // Return a response that indicates failure but doesn't crash
-            return new Response(JSON.stringify({ error: 'Request timeout' }), {
+        try {
+          // Race the fetch against timeout
+          return await Promise.race([
+            fetch(url, options),
+            timeoutPromise
+          ])
+        } catch (error) {
+          // If it's a timeout, CORS error, or network error, return a failed response
+          if (error.message === 'Request timeout' || 
+              error.name === 'TypeError' || 
+              error.message?.includes('CORS') ||
+              error.message?.includes('Failed to fetch')) {
+            console.warn('⚠️ Supabase request failed (timeout/CORS/network):', url.substring(0, 100))
+            // Return a response that indicates failure
+            return {
+              ok: false,
               status: 408,
-              statusText: 'Request Timeout'
-            })
+              statusText: 'Request Timeout',
+              json: async () => ({ error: 'Request timeout or network error' }),
+              text: async () => 'Request timeout or network error'
+            }
           }
           throw error
-        })
+        }
       }
     }
   })
