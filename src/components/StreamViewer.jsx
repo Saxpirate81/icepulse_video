@@ -69,7 +69,7 @@ function StreamViewer({ streamId }) {
   }, [streamId])
 
   useEffect(() => {
-    // Poll for new chunks every 1.5 seconds for smoother updates
+    // Poll for new chunks more frequently for smoother updates
     const pollForChunks = async () => {
       if (!streamId) return
 
@@ -93,8 +93,14 @@ function StreamViewer({ streamId }) {
             console.log('🔴 Stream is now LIVE!')
           }
           
-          // Update chunks always to track available chunks
-          setChunks(data)
+          // Check if we have new chunks (by comparing chunk_index)
+          const hasNewChunks = data.length > chunks.length || 
+            (chunks.length > 0 && data[data.length - 1]?.chunk_index > chunks[chunks.length - 1]?.chunk_index)
+          
+          // Update chunks if we have new ones
+          if (hasNewChunks) {
+            setChunks(data)
+          }
           
           // Only start playing if we have enough chunks buffered OR already started
           const enoughChunks = data.length >= BUFFER_CHUNKS || hasStartedPlaying.current
@@ -103,10 +109,10 @@ function StreamViewer({ streamId }) {
             console.log(`📦 Buffer ready: ${data.length} chunks available, starting playback...`)
             hasStartedPlaying.current = true
             playChunks(data)
-          } else if (hasStartedPlaying.current) {
-            // Continue playing new chunks if we've already started
-            playChunks(data)
-          } else {
+          } else if (hasStartedPlaying.current && hasNewChunks) {
+            // Only call playChunks if we have new chunks to avoid restarting
+            // The playChunks function will continue from where it left off
+          } else if (!hasStartedPlaying.current) {
             console.log(`⏳ Buffering: ${data.length}/${BUFFER_CHUNKS} chunks (need ${BUFFER_CHUNKS} to start)`)
           }
         }
@@ -115,8 +121,8 @@ function StreamViewer({ streamId }) {
       }
     }
 
-    // Poll more frequently for smoother streaming
-    pollIntervalRef.current = setInterval(pollForChunks, 1500)
+    // Poll more frequently for smoother streaming (every 1 second)
+    pollIntervalRef.current = setInterval(pollForChunks, 1000)
     pollForChunks() // Initial load
 
     return () => {
