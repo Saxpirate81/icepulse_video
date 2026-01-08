@@ -16,6 +16,7 @@ function StreamViewer({ streamId }) {
   const chunkRetryCount = useRef(new Map()) // Track retry attempts per chunk
   const nextChunkPreloadRef = useRef(null) // Preload next chunk for seamless transition
   const waitingCheckIntervalRef = useRef(null) // Interval to check for new chunks when waiting
+  const chunksRef = useRef([]) // Ref to track latest chunks for closures
   const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (14+ second buffer)
   const MAX_RETRIES_PER_CHUNK = 2 // Max retries before giving up on a chunk
 
@@ -103,6 +104,7 @@ function StreamViewer({ streamId }) {
           // Update chunks if we have new ones
           if (hasNewChunks) {
             setChunks(data)
+            chunksRef.current = data // Update ref for closures
           }
           
           // Only start playing if we have enough chunks buffered OR already started
@@ -111,12 +113,14 @@ function StreamViewer({ streamId }) {
           if (enoughChunks && !hasStartedPlaying.current) {
             console.log(`📦 Buffer ready: ${data.length} chunks available, starting playback...`)
             hasStartedPlaying.current = true
+            chunksRef.current = data // Set ref before starting playback
             playChunks(data)
           } else if (hasStartedPlaying.current && hasNewChunks) {
             // New chunks arrived - update the chunks list
-            // playNextChunk will automatically pick up new chunks from state
+            // playNextChunk will automatically pick up new chunks from ref
             console.log(`📥 New chunks detected (${data.length} total), continuing playback...`)
-            setChunks(data) // Update state so playNextChunk can access new chunks
+            setChunks(data) // Update state
+            chunksRef.current = data // Update ref for closures
           } else if (!hasStartedPlaying.current) {
             console.log(`⏳ Buffering: ${data.length}/${BUFFER_CHUNKS} chunks (need ${BUFFER_CHUNKS} to start)`)
           }
@@ -186,8 +190,8 @@ function StreamViewer({ streamId }) {
     // Play chunks sequentially starting from current index
     // Use a function that checks current chunks state, not just the initial list
     const playNextChunk = async (index) => {
-      // Get current chunks from state (they may have been updated)
-      const currentChunks = chunks.length > 0 ? chunks : chunkList
+      // Get current chunks from ref (always up-to-date)
+      const currentChunks = chunksRef.current.length > 0 ? chunksRef.current : chunkList
       
       if (index >= currentChunks.length) {
         // Reached the end of available chunks - show waiting message
@@ -201,7 +205,7 @@ function StreamViewer({ streamId }) {
         
         // Check for new chunks every 500ms
         waitingCheckIntervalRef.current = setInterval(() => {
-          const latestChunks = chunks.length > 0 ? chunks : chunkList
+          const latestChunks = chunksRef.current.length > 0 ? chunksRef.current : chunkList
           if (latestChunks.length > index) {
             clearInterval(waitingCheckIntervalRef.current)
             waitingCheckIntervalRef.current = null
