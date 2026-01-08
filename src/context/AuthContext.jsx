@@ -43,15 +43,23 @@ export function AuthProvider({ children }) {
         unsubscribe: () => {}
       }
     } else {
-      // Normal mode: Get initial session with timeout (increased for slow connections)
+      // Normal mode: Get initial session with shorter timeout to prevent hanging
+      // Use a more aggressive timeout since Supabase might be down
       const sessionTimeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session check timeout')), 20000)
+        setTimeout(() => reject(new Error('Session check timeout')), 8000) // 8 seconds - faster timeout
       )
+      
+      // Also set a maximum loading time - always stop loading after 10 seconds
+      const maxLoadingTimeout = setTimeout(() => {
+        console.warn('⚠️ Maximum loading time reached - continuing without auth')
+        setIsLoading(false)
+      }, 10000)
       
       Promise.race([
         supabase.auth.getSession(),
         sessionTimeout
       ]).then(({ data: { session } }) => {
+        clearTimeout(maxLoadingTimeout)
         if (session) {
           loadUserProfile(session.user.id).catch((error) => {
             // Don't log as error - timeout is expected if Supabase is slow
@@ -62,6 +70,7 @@ export function AuthProvider({ children }) {
           setIsLoading(false)
         }
       }).catch((error) => {
+        clearTimeout(maxLoadingTimeout)
         // Don't log as error - timeout is expected if Supabase is slow
         // App can continue without session (e.g., for stream viewing)
         console.warn('⚠️ Session check failed (Supabase may be slow):', error.message || error)
