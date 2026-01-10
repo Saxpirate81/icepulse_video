@@ -793,10 +793,10 @@ export function OrgProvider({ children }) {
             isExistingUser: true
           })
         } else {
-          // Create new auth user with password "password" for testing
+          // Create user account with password "password" for testing
           const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
             email: coach.email,
-            password: 'password', // Generic password for testing
+            password: 'password', // Standard password for testing
             email_confirm: true, // Auto-confirm email for testing
             user_metadata: {
               name: coach.fullName || coach.name,
@@ -817,6 +817,11 @@ export function OrgProvider({ children }) {
             await updateCoach(coachId, {
               isExistingUser: true
             })
+            
+            console.log('[sendCoachInvite] ✅ Account created. Login credentials:', {
+              email: coach.email,
+              password: 'password'
+            })
           }
         }
       } catch (error) {
@@ -835,20 +840,7 @@ export function OrgProvider({ children }) {
     })
     console.log('[sendCoachInvite] Database updated successfully')
     
-    // TODO: Replace with actual API call to send invite email
-    // For now, log what would be sent
-    console.log('[sendCoachInvite] EMAIL SENDING NOT IMPLEMENTED - Would send email to:', {
-      to: coach.email,
-      subject: `Invitation to join ${organization?.name || 'the organization'}`,
-      body: `Hello ${coach.fullName || coach.name},\n\nYou have been invited to join ${organization?.name || 'the organization'} as a coach.\n\nFor testing, you can log in with:\nEmail: ${coach.email}\nPassword: password\n\nSign in at: ${window.location.origin}\n\nThank you!`
-    })
-    console.warn('[sendCoachInvite] ⚠️ Email sending is not yet implemented. The invite has been marked as sent in the database, but no actual email was sent.')
-    console.log('[sendCoachInvite] ✅ TESTING MODE: Auth account created/verified. Login credentials:', {
-      email: coach.email,
-      password: 'password'
-    })
-    
-    return { success: true, message: 'Invite sent successfully. Account created for testing - login with password "password"' }
+    return { success: true, message: 'Account created successfully. User can log in with email and password "password".' }
   }
 
   const resendCoachInvite = async (coachId) => {
@@ -1126,11 +1118,11 @@ export function OrgProvider({ children }) {
               isExistingUser: true
             })
           } else {
-            console.log('[sendPlayerInvite] No existing account found, creating new one...')
-            // Create new auth user with password "password" for testing
+            console.log('[sendPlayerInvite] No existing account found, creating account with password "password"...')
+            // Create user account with password "password" for testing
             const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
               email: playerEmail,
-              password: 'password', // Generic password for testing
+              password: 'password', // Standard password for testing
               email_confirm: true, // Auto-confirm email for testing
               user_metadata: {
                 name: player.fullName || player.name,
@@ -1154,18 +1146,6 @@ export function OrgProvider({ children }) {
                 confirmed: newUser.user.email_confirmed_at ? 'Yes' : 'No'
               })
               
-              // Verify the account was created by trying to fetch it
-              const { data: verifyUser, error: verifyError } = await adminClient.auth.admin.getUserById(newUser.user.id)
-              if (verifyError) {
-                console.error('[sendPlayerInvite] ⚠️ Warning: Could not verify created account:', verifyError)
-              } else {
-                console.log('[sendPlayerInvite] ✅ Account verified:', {
-                  id: verifyUser.user.id,
-                  email: verifyUser.user.email,
-                  canLogin: verifyUser.user.email_confirmed_at ? 'Yes' : 'No'
-                })
-              }
-              
               // Wait for trigger to create profile
               console.log('[sendPlayerInvite] Waiting for database triggers to create profile...')
               await new Promise(resolve => setTimeout(resolve, 2000))
@@ -1179,7 +1159,6 @@ export function OrgProvider({ children }) {
               
               if (profileCheckError || !profileCheck) {
                 console.warn('[sendPlayerInvite] ⚠️ Profile not found after trigger, creating manually...')
-                // Import the createProfileManually function
                 const { createProfileManually } = await import('../lib/supabase-admin')
                 const { data: profileData, error: profileError } = await createProfileManually({
                   id: newUser.user.id,
@@ -1218,7 +1197,7 @@ export function OrgProvider({ children }) {
                   .eq('id', playerId)
               }
               
-              console.log('[sendPlayerInvite] ✅ Account setup complete. Login credentials:', {
+              console.log('[sendPlayerInvite] ✅ Account created. Login credentials:', {
                 email: playerEmail,
                 password: 'password'
               })
@@ -1245,20 +1224,7 @@ export function OrgProvider({ children }) {
     })
     console.log('[sendPlayerInvite] Database updated successfully')
     
-    // TODO: Replace with actual API call to send invite email
-    // For now, log what would be sent
-    console.log('[sendPlayerInvite] EMAIL SENDING NOT IMPLEMENTED - Would send email to:', {
-      to: player.email,
-      subject: `Invitation to join ${organization?.name || 'the organization'}`,
-      body: `Hello ${player.fullName || player.name},\n\nYou have been invited to join ${organization?.name || 'the organization'} as a player.\n\nFor testing, you can log in with:\nEmail: ${player.email}\nPassword: password\n\nSign in at: ${window.location.origin}\n\nThank you!`
-    })
-    console.warn('[sendPlayerInvite] ⚠️ Email sending is not yet implemented. The invite has been marked as sent in the database, but no actual email was sent.')
-    console.log('[sendPlayerInvite] ✅ TESTING MODE: Auth account created/verified. Login credentials:', {
-      email: player.email,
-      password: 'password'
-    })
-    
-    return { success: true, message: 'Invite sent successfully. Account created for testing - login with password "password"' }
+    return { success: true, message: 'Account created successfully. User can log in with email and password "password".' }
   }
 
   const resendPlayerInvite = async (playerId) => {
@@ -1449,10 +1415,10 @@ export function OrgProvider({ children }) {
             isExistingUser: true
           })
         } else {
-          // Create new auth user with password "password" for testing
+          // Create user account with password "password" for testing
           const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
             email: parent.email,
-            password: 'password', // Generic password for testing
+            password: 'password', // Standard password for testing
             email_confirm: true, // Auto-confirm email for testing
             user_metadata: {
               name: parent.fullName || parent.name,
@@ -1473,6 +1439,11 @@ export function OrgProvider({ children }) {
             await updateParent(parentId, {
               isExistingUser: true
             })
+            
+            console.log('[sendParentInvite] ✅ Account created. Login credentials:', {
+              email: parent.email,
+              password: 'password'
+            })
           }
         }
       } catch (error) {
@@ -1491,20 +1462,7 @@ export function OrgProvider({ children }) {
     })
     console.log('[sendParentInvite] Database updated successfully')
     
-    // TODO: Replace with actual API call to send invite email
-    // For now, log what would be sent
-    console.log('[sendParentInvite] EMAIL SENDING NOT IMPLEMENTED - Would send email to:', {
-      to: parent.email,
-      subject: `Invitation to join ${organization?.name || 'the organization'}`,
-      body: `Hello ${parent.fullName || parent.name},\n\nYou have been invited to join ${organization?.name || 'the organization'} as a parent.\n\nFor testing, you can log in with:\nEmail: ${parent.email}\nPassword: password\n\nSign in at: ${window.location.origin}\n\nThank you!`
-    })
-    console.warn('[sendParentInvite] ⚠️ Email sending is not yet implemented. The invite has been marked as sent in the database, but no actual email was sent.')
-    console.log('[sendParentInvite] ✅ TESTING MODE: Auth account created/verified. Login credentials:', {
-      email: parent.email,
-      password: 'password'
-    })
-    
-    return { success: true, message: 'Invite sent successfully. Account created for testing - login with password "password"' }
+    return { success: true, message: 'Account created successfully. User can log in with email and password "password".' }
   }
 
   const resendParentInvite = async (parentId) => {
@@ -2013,6 +1971,49 @@ export function OrgProvider({ children }) {
     }
   }
 
+  // Reactivate an existing stream (for restarting recording)
+  const reactivateStream = async (streamId) => {
+    if (!user?.id || !streamId || USE_MOCK) return { id: streamId, streamUrl: `${window.location.origin}/stream/${streamId}`, nextChunkIndex: 0 }
+
+    try {
+      // Reactivate the stream
+      const { data, error } = await supabase
+        .from('icepulse_streams')
+        .update({ is_active: true })
+        .eq('id', streamId)
+        .eq('created_by', user.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Find the max chunk index to continue from there
+      let nextChunkIndex = 0
+      try {
+        const { data: chunks, error: chunksError } = await supabase
+          .from('icepulse_stream_chunks')
+          .select('chunk_index')
+          .eq('stream_id', streamId)
+          .order('chunk_index', { ascending: false })
+          .limit(1)
+
+        if (!chunksError && chunks && chunks.length > 0) {
+          nextChunkIndex = (chunks[0].chunk_index || 0) + 1
+          console.log(`📊 Found existing chunks, continuing from index ${nextChunkIndex}`)
+        }
+      } catch (chunksErr) {
+        console.warn('Could not query existing chunks, starting from 0:', chunksErr)
+        // Continue with 0 if we can't query
+      }
+
+      const streamUrl = `${window.location.origin}/stream/${streamId}`
+      return { id: streamId, streamUrl, data, nextChunkIndex }
+    } catch (error) {
+      console.error('Error reactivating stream:', error)
+      throw error
+    }
+  }
+
   // Get all videos for a game
   const getGameVideos = async (gameId) => {
     if (!gameId) return []
@@ -2023,17 +2024,44 @@ export function OrgProvider({ children }) {
     }
 
     try {
-      const { data, error } = await supabase
+      console.log('🎥 Starting SAFE query for game:', gameId)
+      
+      // SAFER APPROACH: Use simple query without join first to avoid crashing database
+      // The join with profiles can be very slow with complex RLS policies
+      // We'll fetch user info separately if needed, or use a simpler approach
+      const simpleQueryPromise = supabase
         .from('icepulse_video_recordings')
-        .select(`
-          *,
-          user:icepulse_profiles(id, name, email)
-        `)
+        .select('id, game_id, user_id, video_url, thumbnail_url, recording_start_timestamp, recording_end_timestamp, duration_seconds, recording_type, description, upload_status, created_at')
         .eq('game_id', gameId)
         .eq('upload_status', 'completed')
         .order('recording_start_timestamp', { ascending: true })
+        .limit(50) // Reduced limit to prevent crashes
+
+      // Short timeout to prevent database crashes
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Query timeout after 10 seconds - database may be overloaded. Please check if indexes exist and try again later.'))
+        }, 10000)
+      })
+
+      console.log('🎥 Executing simple query (no join)...')
+      const { data, error } = await Promise.race([simpleQueryPromise, timeoutPromise])
+
+      console.log('🎥 Query completed:', { hasData: !!data, dataCount: data?.length, hasError: !!error })
 
       if (error) {
+        console.error('🎥 Query error:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        })
+        
+        // Handle timeout errors specifically
+        if (error.code === '57014' || error.message?.includes('timeout') || error.message?.includes('canceling statement') || error.message?.includes('Query timeout')) {
+          console.error('🎥 Query timeout - database query is taking too long. This may be due to missing indexes or high database load.')
+          throw new Error('Query timeout: The database query is taking too long. Please run the performance fix SQL script (supabase/fix_video_recordings_performance.sql) in your Supabase SQL Editor to add indexes.')
+        }
         // Bubble up "table missing" so UI can show a clear fix instruction.
         if (error.code === 'PGRST205') {
           throw error
@@ -2042,7 +2070,14 @@ export function OrgProvider({ children }) {
         return []
       }
 
-      return (data || []).map(video => ({
+      console.log('🎥 getGameVideos success:', {
+        gameId,
+        videoCount: data?.length || 0,
+        videos: data?.map(v => ({ id: v.id, status: v.upload_status, user: v.user?.name })) || []
+      })
+
+      // Map videos - fetch user names separately if we have user_ids
+      const videos = (data || []).map(video => ({
         id: video.id,
         video_url: video.video_url,
         thumbnail_url: video.thumbnail_url,
@@ -2051,15 +2086,124 @@ export function OrgProvider({ children }) {
         duration_seconds: video.duration_seconds,
         recording_type: video.recording_type,
         description: video.description,
-        userName: video.user?.name || 'Unknown User',
-        user: video.user
+        userName: 'User', // Will be replaced if we can fetch user info
+        user: { id: video.user_id } // Minimal user object
       }))
+
+      // Try to fetch user names in a separate, simpler query (optional - don't block if it fails)
+      if (videos.length > 0 && videos[0].user?.id) {
+        try {
+          const userIds = [...new Set(videos.map(v => v.user.id).filter(Boolean))]
+          if (userIds.length > 0) {
+            const { data: userData } = await supabase
+              .from('icepulse_profiles')
+              .select('id, name')
+              .in('id', userIds)
+              .limit(50)
+
+            if (userData) {
+              const userMap = new Map(userData.map(u => [u.id, u.name || 'Unknown User']))
+              videos.forEach(video => {
+                video.userName = userMap.get(video.user.id) || 'Unknown User'
+                video.user = { id: video.user.id, name: video.userName }
+              })
+            }
+          }
+        } catch (userError) {
+          console.warn('🎥 Could not fetch user names (non-critical):', userError)
+          // Continue without user names - videos will still work
+        }
+      }
+
+      return videos
     } catch (error) {
       if (error?.code === 'PGRST205') {
         throw error
       }
+      // Re-throw timeout errors so UI can show helpful message
+      if (error.message?.includes('timeout') || error.message?.includes('Query timeout')) {
+        throw error
+      }
       console.error('Error loading game videos:', error)
       return []
+    }
+  }
+
+  // Delete a video recording
+  const deleteVideoRecording = async (videoId) => {
+    if (!user?.id || !videoId) {
+      console.error('Cannot delete video - missing userId or videoId')
+      return { success: false, message: 'Missing required information' }
+    }
+
+    // MOCK MODE
+    if (USE_MOCK) {
+      console.log('🎭 Mock mode - video deletion simulated')
+      return { success: true }
+    }
+
+    try {
+      // First, get the video to check if it exists and get storage path
+      const { data: videoData, error: fetchError } = await supabase
+        .from('icepulse_video_recordings')
+        .select('video_url, thumbnail_url, game_id')
+        .eq('id', videoId)
+        .single()
+
+      if (fetchError || !videoData) {
+        console.error('Error fetching video for deletion:', fetchError)
+        return { success: false, message: 'Video not found' }
+      }
+
+      // Delete from database (RLS policies will handle permissions)
+      const { error: deleteError } = await supabase
+        .from('icepulse_video_recordings')
+        .delete()
+        .eq('id', videoId)
+
+      if (deleteError) {
+        console.error('Error deleting video from database:', deleteError)
+        return { success: false, message: deleteError.message || 'Failed to delete video' }
+      }
+
+      // Try to delete from storage if it's a storage URL
+      // Note: Storage deletion might fail if file doesn't exist, but that's okay
+      if (videoData.video_url && videoData.video_url.includes('storage')) {
+        try {
+          // Extract file path from storage URL
+          const urlParts = videoData.video_url.split('/videos/')
+          if (urlParts.length > 1) {
+            const filePath = urlParts[1].split('?')[0]
+            await supabase.storage
+              .from('videos')
+              .remove([filePath])
+          }
+        } catch (storageError) {
+          // Log but don't fail - storage deletion is best effort
+          console.warn('Could not delete video from storage (may already be deleted):', storageError)
+        }
+      }
+
+      // Try to delete thumbnail if it exists
+      if (videoData.thumbnail_url && videoData.thumbnail_url.includes('storage')) {
+        try {
+          const urlParts = videoData.thumbnail_url.split('/videos/')
+          if (urlParts.length > 1) {
+            const filePath = urlParts[1].split('?')[0]
+            await supabase.storage
+              .from('videos')
+              .remove([filePath])
+          }
+        } catch (storageError) {
+          // Log but don't fail
+          console.warn('Could not delete thumbnail from storage:', storageError)
+        }
+      }
+
+      return { success: true }
+    } catch (error) {
+      console.error('Error deleting video:', error)
+      return { success: false, message: error.message || 'An error occurred while deleting the video' }
     }
   }
 
@@ -2219,11 +2363,13 @@ export function OrgProvider({ children }) {
     addLocation,
     addVideoRecording,
     getGameVideos,
+    deleteVideoRecording,
     uploadVideoToStorage,
     uploadThumbnailToStorage,
     createStream,
     uploadStreamChunk,
     stopStream,
+    reactivateStream,
     isLoading,
     databaseError,
     clearDatabaseError: () => setDatabaseError(null),

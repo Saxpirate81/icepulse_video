@@ -17,6 +17,8 @@ function StreamViewer({ streamId }) {
   const nextChunkPreloadRef = useRef(null) // Preload next chunk for seamless transition
   const waitingCheckIntervalRef = useRef(null) // Interval to check for new chunks when waiting
   const chunksRef = useRef([]) // Ref to track latest chunks for closures
+  const nextVideoElementRef = useRef(null) // Preloaded next video element for seamless switching
+  const isTransitioningRef = useRef(false) // Prevent overlapping transitions
   const BUFFER_CHUNKS = 2 // Wait for 2 chunks before starting (14+ second buffer)
   const MAX_RETRIES_PER_CHUNK = 2 // Max retries before giving up on a chunk
 
@@ -167,18 +169,42 @@ function StreamViewer({ streamId }) {
           .getPublicUrl(filePath)
 
         if (data?.publicUrl) {
-          // Preload the next video element for seamless switching
-          if (nextChunkPreloadRef.current) {
-            nextChunkPreloadRef.current.src = ''
-            nextChunkPreloadRef.current.load()
+          // Clean up previous preload video element
+          if (nextVideoElementRef.current) {
+            nextVideoElementRef.current.src = ''
+            nextVideoElementRef.current.load()
+            nextVideoElementRef.current = null
           }
           
+          // Create and preload the next video element for seamless switching
           const preloadVideo = document.createElement('video')
           preloadVideo.preload = 'auto'
           preloadVideo.muted = true
+          preloadVideo.playsInline = true
+          preloadVideo.crossOrigin = 'anonymous'
+          
+          // Set up preload video to buffer fully
+          preloadVideo.addEventListener('canplaythrough', () => {
+            console.log(`✅ Next chunk ${index + 1} preloaded and ready`)
+          }, { once: true })
+          
           preloadVideo.src = data.publicUrl
           preloadVideo.load()
-          nextChunkPreloadRef.current = preloadVideo
+          
+          // Start loading immediately (don't wait for user interaction)
+          try {
+            await preloadVideo.play().catch(() => {
+              // Play might fail (autoplay restrictions), but that's okay
+              // The important part is that we've loaded the video
+            })
+            preloadVideo.pause()
+            preloadVideo.currentTime = 0
+          } catch (err) {
+            // Silent fail - preloading is best effort
+          }
+          
+          nextVideoElementRef.current = preloadVideo
+          nextChunkPreloadRef.current = data.publicUrl
           return data.publicUrl
         }
       } catch (err) {
@@ -237,8 +263,8 @@ function StreamViewer({ streamId }) {
 
       const chunk = currentChunks[index]
       if (!chunk.video_url) {
-        // Skip invalid chunks
-        setTimeout(() => playNextChunk(index + 1), 500)
+        // Skip invalid chunks - immediate transition, no delay
+        playNextChunk(index + 1)
         return
       }
 
@@ -248,7 +274,8 @@ function StreamViewer({ streamId }) {
       if (retryCount >= MAX_RETRIES_PER_CHUNK) {
         console.warn(`⏭️ Skipping chunk ${index + 1} - failed ${retryCount} times`)
         failedChunks.current.add(chunkKey)
-        setTimeout(() => playNextChunk(index + 1), 200)
+        // Immediate transition - no delay
+        playNextChunk(index + 1)
         return
       }
 
@@ -266,7 +293,8 @@ function StreamViewer({ streamId }) {
 
         if (!data?.publicUrl) {
           console.error(`❌ No public URL for chunk ${index + 1}:`, chunk.video_url)
-          setTimeout(() => playNextChunk(index + 1), 1000)
+          // Retry after short delay
+          setTimeout(() => playNextChunk(index + 1), 500)
           return
         }
 
@@ -275,9 +303,14 @@ function StreamViewer({ streamId }) {
 
         console.log(`▶️ Playing chunk ${index + 1}/${currentChunks.length}`)
         
-        // Preload next chunk while this one plays
-        if (index + 1 < currentChunks.length) {
-          preloadNextChunk(index + 1, currentChunks)
+        // Preload next chunk EARLY for seamless transition (at 50% progress)
+        // This gives us more time to buffer the next chunk
+        let nextChunkPreloaded = false
+        const preloadNextChunkEarly = () => {
+          if (!nextChunkPreloaded && index + 1 < currentChunks.length) {
+            nextChunkPreloaded = true
+            preloadNextChunk(index + 1, currentChunks)
+          }
         }
         
         // Clear any previous error handlers
@@ -321,13 +354,14 @@ function StreamViewer({ streamId }) {
           if (retryCount >= MAX_RETRIES_PER_CHUNK) {
             console.warn(`⏭️ Giving up on chunk ${index + 1} after ${retryCount} failures`)
             failedChunks.current.add(chunkKey)
-            setTimeout(() => playNextChunk(index + 1), 300)
+            // Immediate transition - no delay
+            playNextChunk(index + 1)
           } else {
-            // Retry this chunk after a longer delay (wait for upload to complete)
-            console.log(`🔄 Retrying chunk ${index + 1} in 2 seconds...`)
+            // Retry this chunk after a short delay (wait for upload to complete)
+            console.log(`🔄 Retrying chunk ${index + 1} in 1.5 seconds...`)
             setTimeout(() => {
               playNextChunk(index)
-            }, 2000)
+            }, 1500)
           }
         }
         
@@ -336,22 +370,43 @@ function StreamViewer({ streamId }) {
         // Set video source
         video.src = data.publicUrl
         
-        // Wait for video metadata to load
+        // Wait for video to be ready to play through (fully buffered)
         const canPlay = new Promise((resolve, reject) => {
           const cleanup = () => {
+            video.removeEventListener('canplaythrough', onCanPlayThrough)
             video.removeEventListener('canplay', onCanPlay)
             video.removeEventListener('loadeddata', onLoadedData)
             video.removeEventListener('error', onError)
           }
           
-          const onCanPlay = () => {
+          // Prefer canplaythrough for better buffering
+          const onCanPlayThrough = () => {
             cleanup()
             resolve()
           }
           
+          const onCanPlay = () => {
+            // If canplaythrough doesn't fire, canplay is acceptable
+            if (!video.readyState || video.readyState < 3) {
+              // Wait a bit more for buffering
+              setTimeout(() => {
+                if (video.readyState >= 3) {
+                  cleanup()
+                  resolve()
+                }
+              }, 500)
+            } else {
+              cleanup()
+              resolve()
+            }
+          }
+          
           const onLoadedData = () => {
-            cleanup()
-            resolve()
+            // Fallback if canplay doesn't fire
+            setTimeout(() => {
+              cleanup()
+              resolve()
+            }, 100)
           }
           
           const onError = (err) => {
@@ -359,12 +414,13 @@ function StreamViewer({ streamId }) {
             reject(err)
           }
           
+          video.addEventListener('canplaythrough', onCanPlayThrough, { once: true })
           video.addEventListener('canplay', onCanPlay, { once: true })
           video.addEventListener('loadeddata', onLoadedData, { once: true })
           video.addEventListener('error', onError, { once: true })
           video.load()
           
-          // Fallback timeout (increased for slow uploads)
+          // Optimized timeout - reduced for faster transitions
           setTimeout(() => {
             cleanup()
             // If video loaded but events didn't fire, proceed anyway
@@ -373,7 +429,7 @@ function StreamViewer({ streamId }) {
             } else {
               reject(new Error('Video load timeout'))
             }
-          }, 7000) // 7 seconds - allows time for chunk uploads to complete
+          }, 5000) // 5 seconds - balanced for chunk uploads
         })
         
         try {
@@ -390,19 +446,25 @@ function StreamViewer({ streamId }) {
           if (retryCount >= MAX_RETRIES_PER_CHUNK) {
             console.warn(`⏭️ Giving up on chunk ${index + 1} after ${retryCount} load failures`)
             failedChunks.current.add(chunkKey)
-            setTimeout(() => playNextChunk(index + 1), 300)
+            // Immediate transition - no delay
+            playNextChunk(index + 1)
           } else {
-            // Retry after waiting longer (chunk might still be uploading)
-            console.log(`🔄 Retrying chunk ${index + 1} load in 2 seconds...`)
+            // Retry after waiting (chunk might still be uploading)
+            console.log(`🔄 Retrying chunk ${index + 1} load in 1.5 seconds...`)
             setTimeout(() => {
               playNextChunk(index)
-            }, 2000)
+            }, 1500)
           }
           return
         }
         
         // Remove error handler if we got here (video loaded successfully)
         video.removeEventListener('error', errorHandler)
+        
+        // Preload next chunk immediately after current one is ready
+        if (index + 1 < currentChunks.length) {
+          preloadNextChunkEarly()
+        }
         
         // Play immediately when ready
         try {
@@ -412,56 +474,90 @@ function StreamViewer({ streamId }) {
           setIsWaitingForChunks(false) // Hide waiting message when playing
         } catch (playErr) {
           console.warn(`⚠️ Play failed for chunk ${index + 1}:`, playErr)
-          // Try next chunk if current one fails
-          setTimeout(() => playNextChunk(index + 1), 500)
+          // Try next chunk immediately if current one fails
+          playNextChunk(index + 1)
           return
         }
 
         // Monitor when chunk is about to end for seamless transition
+        // Start preloading earlier (at 50% instead of 90%) for smoother transitions
         const onTimeUpdate = () => {
-          // When we're 90% through the video, prepare next chunk
-          if (video.duration && video.currentTime > 0 && video.currentTime / video.duration > 0.9) {
-            // Preload next chunk if not already done
-            if (index + 1 < currentChunks.length && !nextChunkPreloadRef.current?.src) {
-              preloadNextChunk(index + 1, currentChunks)
+          if (video.duration && video.currentTime > 0) {
+            const progress = video.currentTime / video.duration
+            
+            // Preload at 50% for better buffering
+            if (progress > 0.5 && !nextChunkPreloaded && index + 1 < currentChunks.length) {
+              preloadNextChunkEarly()
+            }
+            
+            // At 95%, ensure next chunk is fully ready
+            if (progress > 0.95 && index + 1 < currentChunks.length) {
+              // Next chunk should already be preloaded, but double-check
+              if (nextVideoElementRef.current) {
+                const nextVideo = nextVideoElementRef.current
+                if (nextVideo.readyState >= 3) {
+                  // Next video is ready - prepare for seamless switch
+                  nextVideo.currentTime = 0
+                }
+              }
             }
           }
         }
         
         video.addEventListener('timeupdate', onTimeUpdate)
 
-        // When this chunk ends, IMMEDIATELY switch to next (seamless transition)
+        // When this chunk ends, IMMEDIATELY switch to next (ZERO delay)
         const onEnded = () => {
+          if (isTransitioningRef.current) return // Prevent overlapping transitions
+          isTransitioningRef.current = true
+          
           clearTimeout(fallbackTimeout)
           video.removeEventListener('ended', onEnded)
           video.removeEventListener('timeupdate', onTimeUpdate)
           
           // Instant transition - no delay for seamless playback
           console.log(`⏭️ Chunk ${index + 1} ended, seamlessly moving to next`)
-          playNextChunk(index + 1)
+          
+          // Use preloaded video element if available for instant switch
+          if (nextVideoElementRef.current && nextVideoElementRef.current.readyState >= 3) {
+            const nextVideo = nextVideoElementRef.current
+            // This could be used for even more seamless transitions
+            // but the current approach works well too
+          }
+          
+          // Immediately play next chunk
+          setTimeout(() => {
+            isTransitioningRef.current = false
+            playNextChunk(index + 1)
+          }, 0) // Zero delay - execute on next tick
         }
 
         video.addEventListener('ended', onEnded, { once: true })
 
         // Fallback: if video doesn't end naturally, move on
-        // Use actual video duration if available, or default to 10 seconds (segment duration)
+        // Use actual video duration if available, with minimal buffer
         const estimatedDuration = video.duration && video.duration > 0 
-          ? (video.duration * 1000) + 200 // Add 200ms buffer
-          : 10200 // Default 10.2 seconds for 10-second segments
+          ? (video.duration * 1000) + 100 // Add only 100ms buffer for faster transitions
+          : 10100 // Default 10.1 seconds for 10-second segments
           
         const fallbackTimeout = setTimeout(() => {
-          video.removeEventListener('ended', onEnded)
-          // Always try next - playNextChunk will check if it exists
-          console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
-          playNextChunk(index + 1)
+          if (!isTransitioningRef.current) {
+            video.removeEventListener('ended', onEnded)
+            video.removeEventListener('timeupdate', onTimeUpdate)
+            console.log(`⏱️ Chunk ${index + 1} timeout (${Math.round(estimatedDuration/1000)}s), moving to next`)
+            playNextChunk(index + 1)
+          }
         }, estimatedDuration)
 
         // Clear timeout if video ends naturally
-        video.addEventListener('ended', () => clearTimeout(fallbackTimeout), { once: true })
+        video.addEventListener('ended', () => {
+          clearTimeout(fallbackTimeout)
+          isTransitioningRef.current = false
+        }, { once: true })
       } catch (err) {
         console.error(`❌ Error playing chunk ${index + 1}:`, err)
-        // Try next chunk on error
-        setTimeout(() => playNextChunk(index + 1), 500)
+        // Try next chunk immediately on error - no delay
+        playNextChunk(index + 1)
       }
     }
 
@@ -556,6 +652,8 @@ function StreamViewer({ streamId }) {
           controlsList="nodownload"
           preload="auto"
           crossOrigin="anonymous"
+          disablePictureInPicture
+          disableRemotePlayback
         />
         
         {/* "Stream will continue shortly..." overlay */}

@@ -215,8 +215,9 @@ export function AuthProvider({ children }) {
           allLocalStorage: Object.keys(localStorage).filter(k => k.includes('mock') || k.includes('test'))
         })
         
-        // Check testing toggles OR if in dev mode and localStorage has a role override
-        if (testingTogglesEnabled || (isDev && testRole && ['organization', 'coach', 'player', 'parent'].includes(testRole))) {
+        // Only override role if testing toggles are EXPLICITLY enabled
+        // Don't override based on dev mode alone - this causes issues when logging in directly
+        if (testingTogglesEnabled) {
           console.log('🔍 Testing mode check:', { 
             enabled: testingTogglesEnabled, 
             isDev,
@@ -232,7 +233,12 @@ export function AuthProvider({ children }) {
             console.log('⚠️ Testing mode: No valid role override found in localStorage. testRole:', testRole)
           }
         } else {
-          console.log('⚠️ Testing toggles not enabled, using profile role:', profile.role)
+          // Clear any stale testing role from localStorage when not in testing mode
+          if (testRole && isDev) {
+            console.log('🧹 Clearing stale testing role from localStorage:', testRole)
+            localStorage.removeItem('mock_user_role')
+          }
+          console.log('ℹ️ Testing toggles not enabled, using profile role:', profile.role)
         }
         
         // Map profile to user object format expected by app
@@ -266,10 +272,17 @@ export function AuthProvider({ children }) {
       const normalizedEmail = email.trim().toLowerCase()
       console.log('[login] Attempting login with:', { email: normalizedEmail, passwordLength: password.length })
       
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // Add timeout to login request to prevent hanging (increased timeout for slow connections)
+      const loginPromise = supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
       })
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Login request timed out. Please check your internet connection and try again.')), 30000)
+      )
+      
+      const { data, error } = await Promise.race([loginPromise, timeoutPromise])
 
       if (error) {
         console.error('[login] Login error:', {
@@ -277,6 +290,17 @@ export function AuthProvider({ children }) {
           status: error.status,
           name: error.name
         })
+        
+        // Handle CORS/network errors
+        if (error.message?.includes('Failed to fetch') || 
+            error.message?.includes('CORS') || 
+            error.status === 0 ||
+            error.name === 'AuthRetryableFetchError') {
+          return { 
+            success: false, 
+            message: 'Unable to connect to server. This may be a temporary network issue. Please check your internet connection and try again in a few moments.' 
+          }
+        }
         
         // Provide more helpful error messages
         if (error.message?.includes('Invalid login credentials') || error.message?.includes('Invalid login')) {
@@ -341,7 +365,19 @@ export function AuthProvider({ children }) {
       return { success: false, message: 'Login failed - no user data returned' }
     } catch (error) {
       console.error('Login error:', error)
-      return { success: false, message: 'An error occurred during login' }
+      
+      // Handle timeout and network errors
+      if (error.message?.includes('timed out') || 
+          error.message?.includes('Failed to fetch') ||
+          error.message?.includes('CORS') ||
+          error.name === 'AuthRetryableFetchError') {
+        return { 
+          success: false, 
+          message: 'Unable to connect to server. This may be a temporary network issue. Please check your internet connection and try again in a few moments.' 
+        }
+      }
+      
+      return { success: false, message: error.message || 'An error occurred during login' }
     }
   }
 

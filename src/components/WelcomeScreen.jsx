@@ -13,24 +13,28 @@ function WelcomeScreen() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetEmailSent, setResetEmailSent] = useState(false)
-  const [showLoginScreen, setShowLoginScreen] = useState(false)
+  // Start showing login screen immediately (will fade in when showLogo becomes false)
+  const [showLoginScreen, setShowLoginScreen] = useState(true)
 
   // Handle logo fade out and login screen fade in
   useEffect(() => {
     if (showLogo) {
-      // Start showing login screen slightly before logo fully fades (for crossfade effect)
+      // Start showing login screen earlier for seamless transition
+      // Logo animation: 1.5s flash + 1s hold + 0.5s fade = 3s total
+      // Logo starts fading at 2.5s, so start login fade-in at 1.8s
+      // This ensures login screen is fully visible (1.8s + 0.6s = 2.4s) before logo fully fades (3s)
       const showLoginTimer = setTimeout(() => {
         setShowLoginScreen(true)
-      }, 2400) // Start fade-in 0.6s before logo fully fades (at 2.4s, logo starts fading at 2.5s)
+      }, 1800)
       
       return () => {
         clearTimeout(showLoginTimer)
       }
     } else {
-      // Once logo is hidden, ensure login screen is visible
+      // Once logo is hidden, ensure login screen is visible immediately (no delay)
       setShowLoginScreen(true)
     }
-  }, [showLogo, setShowLogo])
+  }, [showLogo])
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -186,9 +190,10 @@ function WelcomeScreen() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     pattern="[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-                    className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="your@email.com"
                     required
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -297,9 +302,10 @@ function WelcomeScreen() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 pattern="[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-                className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 placeholder="your@email.com"
                 required
+                disabled={loading}
               />
             </div>
           </div>
@@ -312,9 +318,10 @@ function WelcomeScreen() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white pl-10 pr-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 placeholder="••••••••"
                 required
+                disabled={loading}
               />
             </div>
           </div>

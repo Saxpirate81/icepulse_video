@@ -1,12 +1,24 @@
 import { useState, useRef, useEffect } from 'react'
-import { Video, Square, Upload, CheckCircle, Clock, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell, Copy, Share2, Check } from 'lucide-react'
+import { Video, Square, Upload, CheckCircle, Clock, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell, Copy, Share2, Check, RotateCcw } from 'lucide-react'
 import Dropdown from './Dropdown'
 import { useAuth } from '../context/AuthContext'
 import { useOrgOptional } from '../context/OrgContext'
+import { useIndividual } from '../context/IndividualContext'
+import { supabase } from '../lib/supabase'
 
 function VideoRecorder() {
   const orgContext = useOrgOptional()
   const organization = orgContext?.organization || null
+  const { user } = useAuth()
+  
+  // Try to get IndividualContext for players/parents (may not be available)
+  let individualContext = null
+  try {
+    individualContext = useIndividual()
+  } catch (e) {
+    // IndividualContext not available - that's okay
+  }
+  
   const addVideoRecording = orgContext?.addVideoRecording || null
   const addGame = orgContext?.addGame || null
   const uploadVideoToStorage = orgContext?.uploadVideoToStorage || null
@@ -14,7 +26,222 @@ function VideoRecorder() {
   const createStream = orgContext?.createStream || null
   const uploadStreamChunk = orgContext?.uploadStreamChunk || null
   const stopStream = orgContext?.stopStream || null
-  const { user } = useAuth()
+  const reactivateStream = orgContext?.reactivateStream || null
+  
+  // For players: get teams/seasons from their assignments
+  const [playerTeams, setPlayerTeams] = useState([])
+  const [playerSeasons, setPlayerSeasons] = useState([])
+  
+  // Add timeout helper with shorter timeout
+  const withShortTimeout = (promise, timeoutMs = 5000) => {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+    ])
+  }
+
+  useEffect(() => {
+    let isMounted = true // Prevent state updates if component unmounts
+    let abortController = new AbortController()
+    
+    const loadPlayerTeamsAndSeasons = async () => {
+      // Only load if user is on the recorder view and is a player/parent
+      // Add a delay to prevent immediate loading on mount
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      if (abortController.signal.aborted || !isMounted) return
+      
+      // Load teams/seasons for players OR parents (through their connected players)
+      if ((user?.role === 'player' || user?.role === 'parent') && user?.id) {
+        console.log(`🎮 Loading teams/seasons for ${user.role}:`, user.id)
+        try {
+          let playerIds = []
+          
+          if (user.role === 'player') {
+            // For players: get their own player record with timeout
+            const { data: playerData, error: playerError } = await withShortTimeout(
+              supabase
+                .from('icepulse_players')
+                .select('id')
+                .or(`profile_id.eq.${user.id},individual_user_id.eq.${user.id}`)
+                .limit(10),
+              5000
+            ).catch(err => {
+              console.error('🎮 Player query timeout:', err)
+              return { data: null, error: err }
+            })
+            
+            if (playerError || !playerData) {
+              console.error('🎮 Error finding player:', playerError)
+              if (isMounted) {
+                setPlayerTeams([])
+                setPlayerSeasons([])
+              }
+              return
+            }
+            if (playerData.length > 0) {
+              playerIds = playerData.map(p => p.id)
+            }
+          } else if (user.role === 'parent') {
+            // For parents: get their connected players with timeout
+            const parentResult = await withShortTimeout(
+              supabase
+                .from('icepulse_parents')
+                .select('id')
+                .eq('profile_id', user.id)
+                .limit(1)
+                .maybeSingle(),
+              5000
+            ).catch(err => {
+              console.error('👨‍👩‍👧‍👦 Parent query timeout:', err)
+              return { data: null, error: err }
+            })
+            
+            if (parentResult.error || !parentResult.data?.id) {
+              console.error('👨‍👩‍👧‍👦 Error finding parent record:', parentResult.error)
+              if (isMounted) {
+                setPlayerTeams([])
+                setPlayerSeasons([])
+              }
+              return
+            }
+            
+            const connectionsResult = await withShortTimeout(
+              supabase
+                .from('icepulse_parent_player_connections')
+                .select('player_id')
+                .eq('parent_id', parentResult.data.id),
+              5000
+            ).catch(err => {
+              console.error('👨‍👩‍👧‍👦 Connections query timeout:', err)
+              return { data: null, error: err }
+            })
+            
+            if (connectionsResult.error || !connectionsResult.data) {
+              console.error('👨‍👩‍👧‍👦 Error finding player connections:', connectionsResult.error)
+              if (isMounted) {
+                setPlayerTeams([])
+                setPlayerSeasons([])
+              }
+              return
+            }
+            
+            if (connectionsResult.data.length > 0) {
+              playerIds = connectionsResult.data.map(c => c.player_id)
+            }
+          }
+          
+          if (playerIds.length === 0) {
+            console.warn('🎮 No player IDs found')
+            if (isMounted) {
+              setPlayerTeams([])
+              setPlayerSeasons([])
+            }
+            return
+          }
+          
+          // Get assignments with timeout
+          const assignmentsResult = await withShortTimeout(
+            supabase
+              .from('icepulse_player_assignments')
+              .select('team_id, season_id')
+              .in('player_id', playerIds)
+              .limit(50), // Limit to prevent huge queries
+            5000
+          ).catch(err => {
+            console.error('🎮 Assignments query timeout:', err)
+            return { data: null, error: err }
+          })
+          
+          if (assignmentsResult.error || !assignmentsResult.data) {
+            console.error('🎮 Error fetching assignments:', assignmentsResult.error)
+            if (isMounted) {
+              setPlayerTeams([])
+              setPlayerSeasons([])
+            }
+            return
+          }
+          
+          const assignments = assignmentsResult.data
+          if (assignments.length === 0) {
+            console.warn('🎮 No assignments found')
+            if (isMounted) {
+              setPlayerTeams([])
+              setPlayerSeasons([])
+            }
+            return
+          }
+          
+          const teamIds = [...new Set(assignments.map(a => a.team_id).filter(Boolean))]
+          const seasonIds = [...new Set(assignments.map(a => a.season_id).filter(Boolean))]
+          
+          console.log('🎮 Extracted IDs:', { teamIds: teamIds.length, seasonIds: seasonIds.length })
+          
+          // Fetch teams first, then seasons separately to avoid parallel overload
+          let teams = []
+          if (teamIds.length > 0) {
+            try {
+              const teamsResult = await withShortTimeout(
+                supabase.from('icepulse_teams').select('id, name').in('id', teamIds).limit(10),
+                3000 // Keep fast for dropdown
+              )
+              teams = (teamsResult.data || []).map(t => ({ id: t.id, name: t.name }))
+              console.log('🎮 Teams loaded:', teams.length)
+            } catch (err) {
+              console.error('🎮 Teams query failed:', err)
+              // Continue with empty teams - we can still show seasons
+            }
+          }
+          
+          // Now fetch seasons (separately to avoid parallel queries)
+          let seasons = []
+          if (seasonIds.length > 0) {
+            try {
+              // Add a small delay to prevent overwhelming the database
+              await new Promise(resolve => setTimeout(resolve, 200))
+              if (abortController.signal.aborted || !isMounted) return
+              
+              const seasonsResult = await withShortTimeout(
+                supabase.from('icepulse_seasons').select('id, name').in('id', seasonIds).limit(10),
+                8000 // Increased timeout for RLS policy checks (parent access through player assignments)
+              )
+              seasons = (seasonsResult.data || []).map(s => ({ id: s.id, name: s.name }))
+              console.log('🎮 Seasons loaded:', seasons.length)
+            } catch (err) {
+              console.error('🎮 Seasons query failed:', err)
+              // Continue without seasons - better than crashing
+            }
+          }
+          
+          console.log('🎮 Final teams/seasons:', { teams: teams.length, seasons: seasons.length })
+          
+          if (isMounted && !abortController.signal.aborted) {
+            setPlayerTeams(teams)
+            setPlayerSeasons(seasons)
+          }
+        } catch (error) {
+          console.error('🎮 Error loading teams/seasons:', error)
+          if (isMounted) {
+            setPlayerTeams([])
+            setPlayerSeasons([])
+          }
+        }
+      }
+    }
+    
+    loadPlayerTeamsAndSeasons()
+    
+    return () => {
+      isMounted = false // Cleanup
+      abortController.abort() // Cancel any pending requests
+    }
+  }, [user?.id, user?.role])
+  
+  // Use organization teams/seasons if available, otherwise use player teams/seasons
+  const availableTeams = organization?.teams || playerTeams || []
+  const availableSeasons = organization?.seasons || playerSeasons || []
   const [isRecording, setIsRecording] = useState(false)
   const [chunks, setChunks] = useState([])
   const [stream, setStream] = useState(null)
@@ -24,6 +251,8 @@ function VideoRecorder() {
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [cameras, setCameras] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState(null)
+  const [isMobile, setIsMobile] = useState(false)
+  const [facingMode, setFacingMode] = useState('environment') // 'environment' = back, 'user' = front
   const [selectedGameId, setSelectedGameId] = useState(null)
   const [recordingStartTimestamp, setRecordingStartTimestamp] = useState(null)
   const [showEventModal, setShowEventModal] = useState(true)
@@ -63,15 +292,40 @@ function VideoRecorder() {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoDevices = devices.filter(device => device.kind === 'videoinput')
       
-      // Find built-in camera (usually has "built-in" or "FaceTime" in the label, or is the first one)
+      // On mobile, try to identify front vs back cameras
+      const frontCameras = []
+      const backCameras = []
+      
+      videoDevices.forEach(device => {
+        const label = device.label.toLowerCase()
+        // Front camera indicators
+        if (label.includes('front') || label.includes('user') || label.includes('facing') || label.includes('selfie')) {
+          frontCameras.push(device)
+        }
+        // Back camera indicators
+        else if (label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('world')) {
+          backCameras.push(device)
+        }
+        // If we can't tell, assume it's back camera (default preference)
+        else {
+          backCameras.push(device)
+        }
+      })
+      
+      // Find default camera
       let defaultCamera = null
       if (videoDevices.length > 0) {
-        // Try to find built-in camera by label
+        if (isMobile) {
+          // On mobile, prefer back camera (environment)
+          defaultCamera = backCameras[0] || frontCameras[0] || videoDevices[0]
+        } else {
+          // On desktop, try to find built-in camera
         defaultCamera = videoDevices.find(device => 
           device.label.toLowerCase().includes('built-in') ||
           device.label.toLowerCase().includes('facetime') ||
           device.label.toLowerCase().includes('integrated')
-        ) || videoDevices[0] // Fallback to first camera
+          ) || videoDevices[0]
+        }
         
         setCameras(videoDevices)
         if (!selectedCameraId) {
@@ -86,7 +340,7 @@ function VideoRecorder() {
     }
   }
 
-  const requestMediaAccess = async (cameraId = null) => {
+  const requestMediaAccess = async (cameraId = null, facingModeOverride = null) => {
     setIsRequesting(true)
     setError(null)
     
@@ -96,9 +350,24 @@ function VideoRecorder() {
     }
     
     try {
+      // Build video constraints
+      let videoConstraints = {}
+      
+      if (cameraId) {
+        // If specific camera ID is provided, use it
+        videoConstraints = { deviceId: { exact: cameraId } }
+      } else if (isMobile && (facingModeOverride || facingMode)) {
+        // On mobile, use facingMode to get front/back camera
+        const mode = facingModeOverride || facingMode
+        videoConstraints = { facingMode: mode }
+      } else {
+        // Default: just request video
+        videoConstraints = true
+      }
+      
       // Always request audio initially to get permission, then we can toggle it
       const constraints = {
-        video: cameraId ? { deviceId: { exact: cameraId } } : true,
+        video: videoConstraints,
         audio: true // Always request audio for permission, we'll toggle tracks
       }
       
@@ -154,6 +423,38 @@ function VideoRecorder() {
     await requestMediaAccess(cameraId)
   }
 
+  // Flip between front and back camera on mobile
+  const flipCamera = async () => {
+    if (isRecording) {
+      // Can't switch camera while recording
+      return
+    }
+    
+    if (!isMobile) {
+      // On desktop, just cycle through available cameras
+      if (cameras.length > 1) {
+        const currentIndex = cameras.findIndex(c => c.deviceId === selectedCameraId)
+        const nextIndex = (currentIndex + 1) % cameras.length
+        await switchCamera(cameras[nextIndex].deviceId)
+      }
+      return
+    }
+    
+    // On mobile, flip between front and back using facingMode
+    const newFacingMode = facingMode === 'environment' ? 'user' : 'environment'
+    setFacingMode(newFacingMode)
+    setSelectedCameraId(null) // Clear selected ID so facingMode is used
+    await requestMediaAccess(null, newFacingMode)
+    
+    // After switching, try to find the matching camera device
+    // This helps with camera enumeration later
+    try {
+      await getAvailableCameras()
+    } catch (err) {
+      console.warn('Could not enumerate cameras after flip:', err)
+    }
+  }
+
   const toggleAudio = () => {
     if (!streamRef.current) return
     
@@ -167,8 +468,38 @@ function VideoRecorder() {
     setAudioEnabled(newAudioState)
   }
 
+  // Detect mobile device
   useEffect(() => {
-    requestMediaAccess()
+    const checkMobile = () => {
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (typeof window !== 'undefined' && window.innerWidth <= 768)
+      setIsMobile(isMobileDevice)
+      // Default to back camera on mobile
+      if (isMobileDevice) {
+        setFacingMode('environment')
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  useEffect(() => {
+    // On mobile, request back camera by default; on desktop, use default camera
+    // Only run once on mount, not when isMobile changes
+    const initialRequest = async () => {
+      // Wait a bit for mobile detection to complete
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (typeof window !== 'undefined' && window.innerWidth <= 768)
+      
+      if (isMobileDevice) {
+        await requestMediaAccess(null, 'environment') // Back camera
+      } else {
+        await requestMediaAccess()
+      }
+    }
+    initialRequest()
 
     // Handle fullscreen changes (user might exit fullscreen manually)
     const handleFullscreenChange = () => {
@@ -218,7 +549,7 @@ function VideoRecorder() {
     const date = game.gameDate ? new Date(game.gameDate) : null
     const dateStr = date ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'No Date'
     const timeStr = game.gameTime ? game.gameTime.slice(0, 5) : ''
-    const team = organization?.teams?.find(t => t.id === game.teamId)
+    const team = availableTeams.find(t => t.id === game.teamId) || organization?.teams?.find(t => t.id === game.teamId)
     const vs = game.opponent || ''
     return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} vs ${vs}`
   }
@@ -279,7 +610,15 @@ function VideoRecorder() {
       return false
     }
 
-    if (!organization?.id || !addGame) {
+    // For players/parents: allow creating games directly without organization context
+    const isPlayerOrParent = user?.role === 'player' || user?.role === 'parent'
+    
+    if (isPlayerOrParent) {
+      // For players/parents, we'll create games directly
+      // They don't need organization context - they have teams/seasons from their assignments
+      console.log('🎮 Player/Parent: Creating game without organization context')
+    } else if (!organization?.id || !addGame) {
+      // For org users, we still require organization context
       setError('Event setup requires organization access.')
       return false
     }
@@ -299,25 +638,51 @@ function VideoRecorder() {
       setEventSummary(g ? computeEventLabelFromGame(g) : 'Game selected')
       
       // Create stream for this game
-      if (createStream) {
+      let streamData = null
+      if (isPlayerOrParent) {
+        // For players/parents: create stream directly
         try {
-          console.log('🔄 Creating stream for game:', eventExistingGameId)
-          const streamData = await createStream(eventExistingGameId)
-          console.log('✅ Stream created:', streamData)
-          if (streamData?.id && streamData?.streamUrl) {
-            setStreamId(streamData.id)
-            setStreamUrl(streamData.streamUrl)
-            console.log('✅ Stream URL set:', streamData.streamUrl)
+          console.log('🔄 Creating stream directly for existing game:', eventExistingGameId)
+          const streamId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          
+          const { data: streamResult, error: streamError } = await withShortTimeout(
+            supabase
+              .from('icepulse_streams')
+              .insert({
+                id: streamId,
+                game_id: eventExistingGameId,
+                created_by: user.id,
+                is_active: true
+              })
+              .select()
+              .single(),
+            3000
+          ).catch(err => ({ data: null, error: err }))
+          
+          if (streamError || !streamResult) {
+            console.error('❌ Error creating stream:', streamError)
+            setError(`Stream creation failed: ${streamError?.message || 'Unknown error'}. You can still record.`)
+            setShowEventModal(false)
           } else {
-            console.error('❌ Stream data incomplete:', streamData)
-            setError('Stream created but URL not available. You can still record.')
+            streamData = {
+              id: streamResult.id,
+              streamUrl: `${window.location.origin}/stream/${streamResult.id}`
+            }
+          }
+        } catch (err) {
+          console.error('❌ Exception creating stream:', err)
+          setError('Stream creation failed. You can still record.')
             setShowEventModal(false)
           }
-          // Keep modal open so user can see/copy the stream URL
+      } else if (createStream) {
+        // For org users: use createStream from OrgContext
+        try {
+          console.log('🔄 Creating stream for game:', eventExistingGameId)
+          streamData = await createStream(eventExistingGameId)
+          console.log('✅ Stream created:', streamData)
         } catch (err) {
           console.error('❌ Error creating stream:', err)
           setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
-          // Still close modal to allow recording
           setShowEventModal(false)
         }
       } else {
@@ -325,6 +690,18 @@ function VideoRecorder() {
         setError('Streaming not available. Recording will still work.')
         setShowEventModal(false)
       }
+      
+      // Set stream data if we have it
+      if (streamData?.id && streamData?.streamUrl) {
+        setStreamId(streamData.id)
+        setStreamUrl(streamData.streamUrl)
+        console.log('✅ Stream URL set:', streamData.streamUrl)
+      } else if (streamData) {
+        console.error('❌ Stream data incomplete:', streamData)
+        setError('Stream created but URL not available. You can still record.')
+        setShowEventModal(false)
+      }
+      
       console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
       return true
     }
@@ -355,7 +732,79 @@ function VideoRecorder() {
 
     setIsCreatingEvent(true)
     try {
-      const created = await addGame({
+      let created = null
+      
+      if (isPlayerOrParent) {
+        // For players/parents: create game directly without organization context
+        // Fetch organization_id from team (we don't store it in dropdown to keep it fast)
+        console.log('🎮 Fetching organization_id for team:', eventTeamId)
+        const { data: teamData, error: teamError } = await withShortTimeout(
+          supabase
+            .from('icepulse_teams')
+            .select('id, organization_id')
+            .eq('id', eventTeamId)
+            .limit(1)
+            .maybeSingle(),
+          8000 // Longer timeout for RLS policy checks - acceptable since this is a one-time operation
+        ).catch(err => ({ data: null, error: err }))
+        
+        if (teamError || !teamData) {
+          console.error('❌ Error fetching team:', teamError)
+          setError(`Failed to load team information: ${teamError?.message || 'Query timeout'}. Please try again.`)
+          setIsCreatingEvent(false)
+          return false
+        }
+        
+        const organizationId = teamData.organization_id
+        if (!organizationId) {
+          console.error('❌ No organization_id found for team:', eventTeamId)
+          setError('Failed to determine organization for this team. Please try again.')
+          setIsCreatingEvent(false)
+          return false
+        }
+        
+        console.log('✅ Found organization_id:', organizationId)
+        
+        // Use database function to create game efficiently, bypassing complex RLS checks
+        console.log('🎮 Using database function to create game')
+        const { data: gameData, error: gameError } = await withShortTimeout(
+          supabase.rpc('create_game_for_player_parent', {
+            p_user_id: user.id,
+            p_user_role: user.role,
+            p_team_id: eventTeamId,
+            p_season_id: eventSeasonId,
+            p_opponent: opponent,
+            p_game_date: eventDate,
+            p_game_time: eventTime || null,
+            p_location: eventLocation?.trim() || null,
+            p_notes: eventNotes?.trim() || (eventType === 'practice' ? 'Practice recording' : eventType === 'skills' ? 'Skills recording' : 'Game created from recorder')
+          }),
+          10000 // 10 second timeout for the function
+        ).catch(err => {
+          console.error('❌ Database function error:', err)
+          return { data: null, error: err }
+        })
+        
+        if (gameError || !gameData || (Array.isArray(gameData) && gameData.length === 0)) {
+          console.error('❌ Error creating game:', gameError)
+          setError(`Failed to create event: ${gameError?.message || 'Unknown error'}`)
+          setIsCreatingEvent(false)
+          return false
+        }
+        
+        // Handle array response from function
+        const game = Array.isArray(gameData) ? gameData[0] : gameData
+        
+        created = {
+          id: game.id,
+          gameDate: game.game_date,
+          gameTime: game.game_time
+        }
+        
+        console.log('✅ Game created directly for player/parent:', created.id)
+      } else {
+        // For org users: use addGame from OrgContext
+        created = await addGame({
         teamId: eventTeamId,
         seasonId: eventSeasonId,
         gameDate: eventDate,
@@ -364,9 +813,11 @@ function VideoRecorder() {
         location: eventLocation?.trim() || null,
         notes: eventNotes?.trim() || (eventType === 'practice' ? 'Practice recording' : eventType === 'skills' ? 'Skills recording' : 'Game created from recorder')
       })
+      }
 
       if (!created?.id) {
         setError('Failed to create event. Please try again.')
+        setIsCreatingEvent(false)
         return false
       }
 
@@ -376,30 +827,65 @@ function VideoRecorder() {
       setEventSummary(`${eventType === 'game' ? 'Game' : eventType === 'practice' ? 'Practice' : 'Skills'} — ${created.gameDate} ${created.gameTime || ''}`.trim())
       
       // Create stream for this game
-      if (createStream) {
+      let streamData = null
+      if (isPlayerOrParent) {
+        // For players/parents: use database function to create stream efficiently
         try {
-          console.log('🔄 Creating stream for new game:', created.id)
-          const streamData = await createStream(created.id)
-          console.log('✅ Stream created:', streamData)
-          if (streamData?.id && streamData?.streamUrl) {
-            setStreamId(streamData.id)
-            setStreamUrl(streamData.streamUrl)
-            console.log('✅ Stream URL set:', streamData.streamUrl)
+          console.log('🔄 Using database function to create stream for player/parent game:', created.id)
+          const { data: streamResult, error: streamError } = await withShortTimeout(
+            supabase.rpc('create_stream_for_player_parent', {
+              p_user_id: user.id,
+              p_game_id: created.id
+            }),
+            8000 // 8 second timeout for the function
+          ).catch(err => {
+            console.error('❌ Database function error:', err)
+            return { data: null, error: err }
+          })
+          
+          if (streamError || !streamResult || (Array.isArray(streamResult) && streamResult.length === 0)) {
+            console.error('❌ Error creating stream:', streamError)
+            setError(`Stream creation failed: ${streamError?.message || 'Unknown error'}. You can still record.`)
+            setShowEventModal(false)
           } else {
-            console.error('❌ Stream data incomplete:', streamData)
-            setError('Stream created but URL not available. You can still record.')
+            // Handle array response from function
+            const stream = Array.isArray(streamResult) ? streamResult[0] : streamResult
+            streamData = {
+              id: stream.id,
+              streamUrl: `${window.location.origin}/stream/${stream.id}`
+            }
+            console.log('✅ Stream created via function:', streamData)
+          }
+        } catch (err) {
+          console.error('❌ Exception creating stream:', err)
+          setError('Stream creation failed. You can still record.')
             setShowEventModal(false)
           }
-          // Keep modal open so user can see/copy the stream URL
+      } else if (createStream) {
+        // For org users: use createStream from OrgContext
+        try {
+          console.log('🔄 Creating stream for new game:', created.id)
+          streamData = await createStream(created.id)
+          console.log('✅ Stream created:', streamData)
         } catch (err) {
           console.error('❌ Error creating stream:', err)
           setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
-          // Still close modal to allow recording
           setShowEventModal(false)
         }
       } else {
         console.warn('⚠️ createStream function not available from OrgContext')
         setError('Streaming not available. Recording will still work.')
+        setShowEventModal(false)
+      }
+      
+      // Set stream data if we have it
+      if (streamData?.id && streamData?.streamUrl) {
+        setStreamId(streamData.id)
+        setStreamUrl(streamData.streamUrl)
+        console.log('✅ Stream URL set:', streamData.streamUrl)
+      } else if (streamData) {
+        console.error('❌ Stream data incomplete:', streamData)
+        setError('Stream created but URL not available. You can still record.')
         setShowEventModal(false)
       }
       console.log('✅ Event created and gameId set:', created.id)
@@ -441,13 +927,33 @@ function VideoRecorder() {
     
     console.log('🎬 Starting recording with gameId:', currentGameIdRef.current, 'state gameId:', selectedGameId)
 
+    // Reactivate stream if it exists (for restarting recording)
+    let nextChunkIndex = 0
+    if (streamId && reactivateStream) {
+      try {
+        console.log('🔄 Reactivating existing stream:', streamId)
+        const reactivated = await reactivateStream(streamId)
+        if (reactivated) {
+          console.log('✅ Stream reactivated:', reactivated)
+          setStreamId(reactivated.id)
+          setStreamUrl(reactivated.streamUrl)
+          // Continue chunk index from where we left off (or 0 if no chunks)
+          nextChunkIndex = reactivated.nextChunkIndex || 0
+          console.log(`📊 Continuing from chunk index ${nextChunkIndex}`)
+        }
+      } catch (err) {
+        console.error('❌ Error reactivating stream:', err)
+        // Continue anyway - might create new stream later
+      }
+    }
+
     // Record start timestamp (CRITICAL for synchronization)
     const startTimestamp = new Date().toISOString()
     setRecordingStartTimestamp(startTimestamp)
     currentStartTimestampRef.current = startTimestamp // Store in ref immediately
     recordedBlobsRef.current = [] // Reset recorded blobs
     streamChunksRef.current = [] // Reset stream chunks
-    streamChunkIndexRef.current = 0 // Reset chunk index
+    streamChunkIndexRef.current = nextChunkIndex // Continue from next chunk index (or 0 if new stream)
     console.log('⏰ Start timestamp set:', startTimestamp)
 
     const mediaRecorder = new MediaRecorder(stream, {
@@ -461,17 +967,22 @@ function VideoRecorder() {
         // Store blob for final video
         recordedBlobsRef.current.push(event.data)
         
-        // If this is a segment stop (streaming), upload the complete segment immediately
-        if (isSegmentStopRef.current && streamId && uploadStreamChunk) {
+        // For streaming: upload segments immediately when they arrive (from timeslice)
+        // This creates seamless playback without gaps
+        if (streamId && uploadStreamChunk) {
           const chunkIndex = streamChunkIndexRef.current++
-          const chunkBlob = event.data // This is a complete, playable WebM segment
+          const chunkBlob = event.data // This is a complete, playable WebM segment from timeslice
           
           try {
-            console.log(`📤 Uploading complete segment ${chunkIndex} (${Math.round(chunkBlob.size / 1024)}KB)...`)
-            await uploadStreamChunk(chunkBlob, streamId, chunkIndex)
+            console.log(`📤 Uploading stream segment ${chunkIndex} (${Math.round(chunkBlob.size / 1024)}KB)...`)
+            // Upload in background - don't block next segment
+            uploadStreamChunk(chunkBlob, streamId, chunkIndex).then(() => {
             console.log(`✅ Stream segment ${chunkIndex} uploaded successfully`)
-          } catch (err) {
+            }).catch((err) => {
             console.error(`❌ Error uploading stream segment ${chunkIndex}:`, err)
+            })
+          } catch (err) {
+            console.error(`❌ Error queuing stream segment ${chunkIndex}:`, err)
           }
         }
         
@@ -499,19 +1010,11 @@ function VideoRecorder() {
     }
 
     mediaRecorder.onstop = async () => {
-      const wasSegmentStop = isSegmentStopRef.current
-      isSegmentStopRef.current = false // Reset for next time
-      
-      // If this was just a segment stop (for streaming), don't do final save yet
-      if (wasSegmentStop) {
-        console.log('🔄 Segment stopped for streaming - continuing recording...')
-        return // The interval handler will restart recording
-      }
-      
       // Final stop - user stopped recording
+      // With timeslice, we don't need to handle segment stops here anymore
       console.log('🛑 Final recording stop')
       
-      // Stop stream chunk interval
+      // Stop stream chunk interval (if it exists - not used with timeslice but kept for safety)
       if (streamChunkIntervalRef.current) {
         clearInterval(streamChunkIntervalRef.current)
         streamChunkIntervalRef.current = null
@@ -565,49 +1068,17 @@ function VideoRecorder() {
       currentStartTimestampRef.current = null
     }
 
-    // Use 7 second intervals - gives more time for upload and smoother playback
-    // For streaming, we'll record complete segments (stop/restart) instead of fragments
-    // This ensures each chunk is a complete, playable WebM file
-    const SEGMENT_DURATION = 10000 // 10 seconds per complete segment
+    // Use timeslice to create segments without stopping/restarting
+    // This eliminates gaps between segments for seamless streaming
+    const SEGMENT_DURATION = 10000 // 10 seconds per segment
     
-    mediaRecorder.start() // Start without timeslice - record complete segments
+    // Start with timeslice to get data chunks every 10 seconds
+    // This creates complete segments without stopping the recorder
+    mediaRecorder.start(SEGMENT_DURATION)
     setIsRecording(true)
     isRecordingRef.current = true
 
-    // Create complete segments every 10 seconds for streaming
-    // We stop/restart the recorder to ensure each chunk is a complete, playable file
-    streamChunkIntervalRef.current = setInterval(async () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        try {
-          // Mark this as a segment stop (not final stop)
-          isSegmentStopRef.current = true
-          
-          // Stop current recording to finalize the segment
-          mediaRecorderRef.current.stop()
-          
-          // Wait for onstop/ondataavailable to complete
-          await new Promise(resolve => setTimeout(resolve, 500))
-          
-          // Restart recording for next segment (if still recording)
-          if (isRecordingRef.current && streamRef.current) {
-            const newRecorder = new MediaRecorder(streamRef.current, {
-              mimeType: 'video/webm;codecs=vp8,opus',
-            })
-            
-            // Set up handlers (same handlers)
-            newRecorder.ondataavailable = mediaRecorderRef.current.ondataavailable
-            newRecorder.onstop = mediaRecorderRef.current.onstop
-            
-            mediaRecorderRef.current = newRecorder
-            newRecorder.start()
-            console.log(`🎬 Restarted recording for next segment`)
-          }
-        } catch (err) {
-          console.error('❌ Error restarting recorder for streaming:', err)
-          isSegmentStopRef.current = false
-        }
-      }
-    }, SEGMENT_DURATION)
+    console.log('🎬 Started recording with timeslice segments (10s each)')
 
     // Request fullscreen when recording starts - use the container div
     if (videoContainerRef.current) {
@@ -710,7 +1181,16 @@ function VideoRecorder() {
 
       // Save to database (if addVideoRecording is available)
       if (addVideoRecording) {
-        await addVideoRecording({
+        console.log('💾 Calling addVideoRecording with:', {
+          gameId: gameIdToUse,
+          hasVideoUrl: !!videoUrl,
+          durationSeconds,
+          hasThumbnail: !!thumbnailUrl,
+          fileSize: videoBlob.size,
+          recordingType: eventType === 'game' ? 'full_game' : 'custom'
+        })
+        
+        const result = await addVideoRecording({
           gameId: gameIdToUse,
           videoUrl: videoUrl, // Now a Storage URL (or blob URL as fallback)
           durationSeconds: durationSeconds,
@@ -727,12 +1207,20 @@ function VideoRecorder() {
                 ? (eventNotes?.trim() ? `Skills: ${eventNotes.trim()}` : 'Skills')
                 : (eventNotes?.trim() ? `Game: ${eventNotes.trim()}` : null)
         })
-        console.log('✅ Recording saved successfully to database')
+        
+        if (result) {
+          console.log('✅ Recording saved successfully to database:', result)
       } else {
-        console.warn('Cannot save recording: addVideoRecording not available (not in OrgProvider)')
+          console.error('❌ addVideoRecording returned null - video was NOT saved!')
+          setError('Video recording failed to save to database. Please check console for details.')
+        }
+      } else {
+        console.error('❌ Cannot save recording: addVideoRecording not available (not in OrgProvider)')
+        setError('Cannot save recording: Organization context not available.')
       }
     } catch (error) {
       console.error('❌ Error saving recording:', error)
+      setError(`Failed to save recording: ${error.message || 'Unknown error'}`)
     }
   }
 
@@ -860,20 +1348,38 @@ function VideoRecorder() {
                   <div className="space-y-3">
                     <div>
                       <label className="block text-gray-300 mb-2 text-sm">Choose Existing Game</label>
+                      {(() => {
+                        const games = organization?.games || []
+                        console.log('🎮 Available games for dropdown:', {
+                          gameCount: games.length,
+                          games: games.map(g => ({ id: g.id, opponent: g.opponent, date: g.gameDate }))
+                        })
+                        return (
                       <Dropdown
-                        options={(organization?.games || [])
+                            options={games
                           .sort((a, b) => (a.gameDate || '').localeCompare(b.gameDate || ''))
                           .map(g => ({
                             value: g.id,
                             label: computeEventLabelFromGame(g)
                           }))}
                         value={eventExistingGameId}
-                        onChange={(val) => { setEventExistingGameId(val); setEventUseManualGame(false) }}
-                        placeholder="Select a game..."
+                            onChange={(val) => { 
+                              console.log('🎮 Game selected from dropdown:', val)
+                              setEventExistingGameId(val)
+                              setEventUseManualGame(false) 
+                            }}
+                            placeholder={games.length === 0 ? "No games available - create one manually" : "Select a game..."}
                         multiple={false}
                         showAllOption={false}
                         icon={<Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />}
                       />
+                        )
+                      })()}
+                      {organization?.games?.length === 0 && (
+                        <p className="text-xs text-yellow-400 mt-1">
+                          No games found. Create games in the Schedule tab first, or create one manually below.
+                        </p>
+                      )}
                       <button
                         type="button"
                         onClick={() => setEventUseManualGame(!eventUseManualGame)}
@@ -910,24 +1416,34 @@ function VideoRecorder() {
                           <div>
                             <label className="block text-gray-300 mb-2 text-sm">Team (Required)</label>
                             <Dropdown
-                              options={(organization?.teams || []).map(t => ({ value: t.id, label: t.name }))}
+                              options={availableTeams.map(t => ({ value: t.id, label: t.name }))}
                               value={eventTeamId}
                               onChange={setEventTeamId}
-                              placeholder="Select team..."
+                              placeholder={availableTeams.length === 0 ? "No teams available" : "Select team..."}
                               multiple={false}
                               showAllOption={false}
                             />
+                            {availableTeams.length === 0 && (
+                              <p className="text-xs text-yellow-400 mt-1">
+                                No teams found. You need to be assigned to a team first.
+                              </p>
+                            )}
                           </div>
                           <div>
                             <label className="block text-gray-300 mb-2 text-sm">Season/Tournament (Required)</label>
                             <Dropdown
-                              options={(organization?.seasons || []).map(s => ({ value: s.id, label: s.name }))}
+                              options={availableSeasons.map(s => ({ value: s.id, label: s.name }))}
                               value={eventSeasonId}
                               onChange={setEventSeasonId}
-                              placeholder="Select season..."
+                              placeholder={availableSeasons.length === 0 ? "No seasons available" : "Select season..."}
                               multiple={false}
                               showAllOption={false}
                             />
+                            {availableSeasons.length === 0 && (
+                              <p className="text-xs text-yellow-400 mt-1">
+                                No seasons found. You need to be assigned to a season first.
+                              </p>
+                            )}
                           </div>
                         </div>
 
@@ -996,24 +1512,34 @@ function VideoRecorder() {
                       <div>
                         <label className="block text-gray-300 mb-2 text-sm">Team (Required)</label>
                         <Dropdown
-                          options={(organization?.teams || []).map(t => ({ value: t.id, label: t.name }))}
+                          options={availableTeams.map(t => ({ value: t.id, label: t.name }))}
                           value={eventTeamId}
                           onChange={setEventTeamId}
-                          placeholder="Select team..."
+                          placeholder={availableTeams.length === 0 ? "No teams available" : "Select team..."}
                           multiple={false}
                           showAllOption={false}
                         />
+                        {availableTeams.length === 0 && (
+                          <p className="text-xs text-yellow-400 mt-1">
+                            No teams found. You need to be assigned to a team first.
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="block text-gray-300 mb-2 text-sm">Season/Tournament (Required)</label>
                         <Dropdown
-                          options={(organization?.seasons || []).map(s => ({ value: s.id, label: s.name }))}
+                          options={availableSeasons.map(s => ({ value: s.id, label: s.name }))}
                           value={eventSeasonId}
                           onChange={setEventSeasonId}
-                          placeholder="Select season..."
+                          placeholder={availableSeasons.length === 0 ? "No seasons available" : "Select season..."}
                           multiple={false}
                           showAllOption={false}
                         />
+                        {availableSeasons.length === 0 && (
+                          <p className="text-xs text-yellow-400 mt-1">
+                            No seasons found. You need to be assigned to a season first.
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -1115,37 +1641,47 @@ function VideoRecorder() {
               </div>
 
               <div className="p-4 border-t border-gray-800 flex items-center justify-between gap-3 flex-shrink-0">
-                <div className="text-xs text-gray-500">
-                  Tip: You can change this later from the Recorder screen.
-                </div>
-                <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
                       setShowEventModal(false)
-                      // If stream URL exists, we still allow closing to proceed to recording
+                    setError(null)
                     }}
                     className="px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800"
                   >
-                    {streamUrl ? 'Start Recording' : 'Cancel'}
+                  Cancel
                   </button>
-                  {!streamUrl && (
+                {streamUrl ? (
+                  // If stream URL exists, show "Start Recording" button
                     <button
-                      onClick={ensureEventSelected}
-                      disabled={isCreatingEvent}
-                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
-                    >
-                      {isCreatingEvent ? 'Saving…' : 'Continue'}
+                    onClick={() => {
+                      setShowEventModal(false)
+                      // Auto-start recording after closing modal
+                      if (stream && !isRecording) {
+                        setTimeout(() => {
+                          startRecording()
+                        }, 100)
+                      }
+                    }}
+                    disabled={!stream}
+                    className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+                  >
+                    Start Recording
+                    </button>
+                ) : (
+                  // If no stream URL yet, show "Save" button that creates event and stream
+                    <button
+                    onClick={async () => {
+                      const success = await ensureEventSelected()
+                      // Don't close modal yet - let user see stream URL if it was created
+                      // Modal will stay open so user can copy/share the stream URL
+                      // User can click "Start Recording" button that appears after stream is created
+                    }}
+                    disabled={isCreatingEvent || !stream}
+                    className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+                  >
+                    {isCreatingEvent ? 'Saving…' : 'Save'}
                     </button>
                   )}
-                  {streamUrl && (
-                    <button
-                      onClick={() => setShowEventModal(false)}
-                      className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 font-semibold"
-                    >
-                      Start Recording
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           </div>
@@ -1257,23 +1793,41 @@ function VideoRecorder() {
                     )}
                   </div>
 
-                  {/* Start Recording Button */}
-                  <div className="flex justify-center gap-4 mb-4">
+                  {/* Event selection reminder - Start Recording button removed (now in modal) */}
+                  {!selectedGameId && (
+                    <div className="flex justify-center mb-4">
                     <button
-                      onClick={startRecording}
-                      disabled={!stream || isCreatingEvent || !selectedGameId}
-                      className="flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors text-sm sm:text-base"
+                        onClick={() => setShowEventModal(true)}
+                        className="flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm sm:text-base"
                     >
-                      <Video className="w-4 h-4 sm:w-5 sm:h-5" />
-                      <span>{isCreatingEvent ? 'Preparing…' : 'Start Recording'}</span>
+                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <span>Select Event to Record</span>
                     </button>
                   </div>
+                  )}
 
                   {/* Camera and Audio Controls - Side by Side */}
                   {stream && (
                     <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-center">
-                      {/* Camera Selection */}
-                      {cameras.length > 1 && (
+                      {/* Camera Controls */}
+                      <div className="flex items-center gap-2">
+                        {/* Flip Camera Button (Mobile) or Camera Dropdown (Desktop) */}
+                        {isMobile && cameras.length > 1 ? (
+                          <button
+                            onClick={flipCamera}
+                            disabled={isRecording}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors text-sm sm:text-base"
+                            title={facingMode === 'environment' ? 'Currently: Back Camera - Click to switch to Front' : 'Currently: Front Camera - Click to switch to Back'}
+                          >
+                            <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <span className="hidden sm:inline">
+                              Switch to {facingMode === 'environment' ? 'Front' : 'Back'}
+                            </span>
+                            <span className="sm:hidden">
+                              {facingMode === 'environment' ? 'Front' : 'Back'}
+                            </span>
+                          </button>
+                        ) : cameras.length > 1 ? (
                         <div className="flex-1 max-w-xs w-full sm:w-auto">
                           <Dropdown
                             options={cameras.map((camera) => ({
@@ -1289,7 +1843,8 @@ function VideoRecorder() {
                             icon={<Camera className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 flex-shrink-0" />}
                           />
                         </div>
-                      )}
+                        ) : null}
+                      </div>
 
                       {/* Audio Toggle */}
                       <button

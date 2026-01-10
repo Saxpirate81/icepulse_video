@@ -13,7 +13,7 @@ import StreamViewer from './components/StreamViewer'
 import { isTestingEnabled } from './utils/testing'
 
 function AppContent() {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading, showLogo } = useAuth()
   const [streamId, setStreamId] = useState(null)
 
   // Check if we're on a streaming route (no auth required)
@@ -43,10 +43,35 @@ function AppContent() {
     return <StreamViewer streamId={streamId} />
   }
 
-  if (isLoading) {
+  // Show logo animation only while showLogo is true
+  // Once logo animation completes (after 3s), show login screen immediately
+  // even if still loading (to avoid gap)
+  if (showLogo && !user) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center transition-opacity duration-500">
+        <div className="text-center">
+          <div className="logo-flash-container">
+            <img
+              src="/Logo.png"
+              alt="IcePulse Logo"
+              className="logo-flash mx-auto object-contain"
+              onError={(e) => {
+                // Try lowercase if uppercase fails
+                if (e.target.src.includes('Logo.png')) {
+                  e.target.src = '/logo.png'
+                  return
+                }
+                // Fallback if image doesn't exist - show text logo
+                e.target.style.display = 'none'
+                const fallback = e.target.nextElementSibling
+                if (fallback) fallback.style.display = 'block'
+              }}
+            />
+            <div className="hidden text-6xl font-bold text-blue-400">
+              IcePulse
+            </div>
+          </div>
+        </div>
       </div>
     )
   }

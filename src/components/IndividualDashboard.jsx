@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { Video, BarChart3 } from 'lucide-react'
+import { Video, BarChart3, Film } from 'lucide-react'
 import VideoRecorder from './VideoRecorder'
+import PlayerVideoList from './PlayerVideoList'
 
 function IndividualDashboard() {
   const { user } = useAuth()
@@ -32,6 +33,19 @@ function IndividualDashboard() {
                 <span>{isPlayer || isParent ? 'My Stats' : 'Stats'}</span>
               </button>
             )}
+            {(isPlayer || isParent) && (
+              <button
+                onClick={() => setActiveView('videos')}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${
+                  activeView === 'videos'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                <Film className="w-5 h-5" />
+                <span>Videos</span>
+              </button>
+            )}
             <button
               onClick={() => setActiveView('recorder')}
               className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${
@@ -41,7 +55,7 @@ function IndividualDashboard() {
               }`}
             >
               <Video className="w-5 h-5" />
-              <span>{isGameRecorder ? 'Record Game' : 'Video Recorder'}</span>
+              <span>{isGameRecorder ? 'Record Game' : 'Recorder'}</span>
             </button>
           </div>
         </div>
@@ -65,6 +79,7 @@ function IndividualDashboard() {
             </div>
           </div>
         )}
+        {activeView === 'videos' && <PlayerVideoList />}
         {activeView === 'recorder' && <VideoRecorder />}
       </div>
     </div>

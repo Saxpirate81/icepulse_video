@@ -207,9 +207,18 @@ export function IndividualProvider({ children }) {
   }
 
   // Load data on mount and when user changes
+  // SKIP auto-loading for parents/players to prevent database overload
+  // They don't need this data - only individual users managing their own teams/seasons need it
   useEffect(() => {
+    // Only load data for users who actually need it (not parents/players)
+    if (user?.role && ['parent', 'player', 'game_recorder'].includes(user.role)) {
+      console.log('⏭️ Skipping IndividualContext auto-load for', user.role, '- not needed')
+      setIsLoading(false)
+      return
+    }
+    
     loadData()
-  }, [user?.id])
+  }, [user?.id, user?.role])
 
   // Players CRUD
   const addPlayer = async (player) => {
@@ -842,6 +851,288 @@ export function IndividualProvider({ children }) {
     }
   }
 
+  // Get videos for players/parents based on their team/season associations
+  // Timeout helper for video queries
+  const withVideoTimeout = (promise, timeoutMs = 8000) => {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`Video query timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+    ])
+  }
+
+  const getPlayerVideos = async () => {
+    console.log('🎥 getPlayerVideos: Called', { hasUser: !!user, userId: user?.id, userRole: user?.role })
+    
+    if (!user?.id) {
+      console.log('🎥 getPlayerVideos: No user ID')
+      return []
+    }
+
+    try {
+      const userId = user.id
+      const isPlayer = user.role === 'player'
+      const isParent = user.role === 'parent'
+
+      console.log('🎥 getPlayerVideos: Starting', { userId, isPlayer, isParent, actualRole: user.role })
+
+      if (!isPlayer && !isParent) {
+        console.log('🎥 getPlayerVideos: Not a player or parent - role is:', user.role)
+        return []
+      }
+
+      // Get team IDs that the player/parent is associated with
+      let teamIds = []
+
+      if (isPlayer) {
+        // For players: get teams from player assignments with timeout
+        const playerResult = await withVideoTimeout(
+          supabase
+            .from('icepulse_players')
+            .select('id')
+            .or(`profile_id.eq.${userId},individual_user_id.eq.${userId}`)
+            .limit(1),
+          5000
+        ).catch(err => ({ data: null, error: err }))
+
+        const playerData = playerResult.data?.[0]
+
+        if (playerData?.id) {
+          const assignmentsResult = await withVideoTimeout(
+            supabase
+              .from('icepulse_player_assignments')
+              .select('team_id')
+              .eq('player_id', playerData.id)
+              .limit(20), // Limit assignments
+            5000
+          ).catch(err => ({ data: null, error: err }))
+
+          if (assignmentsResult.data) {
+            teamIds = assignmentsResult.data.map(a => a.team_id)
+          }
+        }
+      } else if (isParent) {
+        // For parents: get teams from their children's assignments with timeout
+        console.log('🎥 getPlayerVideos: Looking up parent record for userId:', userId)
+        const parentResult = await withVideoTimeout(
+          supabase
+            .from('icepulse_parents')
+            .select('id')
+            .eq('profile_id', userId)
+            .limit(1),
+          5000
+        ).catch(err => {
+          console.error('🎥 getPlayerVideos: Parent query error:', err)
+          return { data: null, error: err }
+        })
+
+        console.log('🎥 getPlayerVideos: Parent query result', { parentResult })
+
+        if (parentResult.error) {
+          console.error('🎥 getPlayerVideos: Error finding parent:', parentResult.error)
+        }
+
+        const parentData = parentResult.data?.[0]
+
+        if (parentData?.id) {
+          console.log('🎥 getPlayerVideos: Found parent, looking up connections for parent_id:', parentData.id)
+          const connectionsResult = await withVideoTimeout(
+            supabase
+              .from('icepulse_parent_player_connections')
+              .select('player_id')
+              .eq('parent_id', parentData.id)
+              .limit(10), // Limit connections
+            5000
+          ).catch(err => {
+            console.error('🎥 getPlayerVideos: Connections query error:', err)
+            return { data: null, error: err }
+          })
+
+          console.log('🎥 getPlayerVideos: Connections query result', { connectionsResult })
+
+          if (connectionsResult.data && connectionsResult.data.length > 0) {
+            const playerIds = connectionsResult.data.map(c => c.player_id)
+            console.log('🎥 getPlayerVideos: Found connected player IDs:', playerIds)
+            
+            const assignmentsResult = await withVideoTimeout(
+              supabase
+                .from('icepulse_player_assignments')
+                .select('team_id')
+                .in('player_id', playerIds)
+                .limit(20), // Limit assignments
+              5000
+            ).catch(err => {
+              console.error('🎥 getPlayerVideos: Assignments query error:', err)
+              return { data: null, error: err }
+            })
+
+            console.log('🎥 getPlayerVideos: Assignments query result', { assignmentsResult })
+
+            if (assignmentsResult.data && assignmentsResult.data.length > 0) {
+              teamIds = [...new Set(assignmentsResult.data.map(a => a.team_id).filter(Boolean))]
+              console.log('🎥 getPlayerVideos: Found team IDs from assignments:', teamIds)
+            } else {
+              console.warn('🎥 getPlayerVideos: No assignments found for connected players')
+            }
+          } else {
+            console.warn('🎥 getPlayerVideos: No player connections found for parent')
+          }
+        } else {
+          console.warn('🎥 getPlayerVideos: No parent record found for userId:', userId)
+        }
+      }
+
+      if (teamIds.length === 0) {
+        console.log('🎥 getPlayerVideos: No team IDs found')
+        return []
+      }
+
+      // Limit team IDs to prevent huge queries
+      teamIds = teamIds.slice(0, 10)
+      console.log('🎥 getPlayerVideos: Looking up games for team IDs:', teamIds.length)
+
+      // Get games for these teams with timeout
+      const gamesResult = await withVideoTimeout(
+        supabase
+          .from('icepulse_games')
+          .select('id')
+          .in('team_id', teamIds)
+          .limit(50), // Limit games
+        5000
+      ).catch(err => ({ data: null, error: err }))
+
+      // Use database function to efficiently fetch videos, bypassing complex RLS checks
+      // This function performs optimized queries internally and avoids timeout issues
+      console.log('🎥 getPlayerVideos: Using database function to fetch videos efficiently')
+      
+      const { data: videos, error: videosError } = await withVideoTimeout(
+        supabase.rpc('get_player_parent_videos', {
+          p_user_id: userId,
+          p_user_role: user.role,
+          p_limit: 20
+        }),
+        10000 // 10 second timeout for the function
+      ).catch(err => {
+        console.error('🎥 getPlayerVideos: Database function error:', err)
+        return { data: null, error: err }
+      })
+
+      if (videosError) {
+        console.error('❌ Error fetching player videos via function:', videosError)
+        return []
+      }
+
+      if (!videos || videos.length === 0) {
+        console.log('🎥 getPlayerVideos: No videos found via database function')
+        return []
+      }
+
+      console.log('🎥 getPlayerVideos: Found', videos.length, 'videos via database function')
+
+      // Use the videos from the function
+      const limitedVideos = videos
+      
+      // Now fetch game/team/season data separately with timeout
+      const gameIdsForLookup = [...new Set(limitedVideos.map(v => v.game_id).filter(Boolean))]
+      console.log('🎥 getPlayerVideos: Fetching game details for', gameIdsForLookup.length, 'games')
+      
+      const gamesDataResult = await withVideoTimeout(
+        supabase
+          .from('icepulse_games')
+          .select('id, opponent, game_date, game_time, location, team_id, season_id')
+          .in('id', gameIdsForLookup)
+          .limit(20), // Limit games
+        5000
+      ).catch(err => {
+        console.error('🎥 Games data query timeout:', err)
+        return { data: [], error: err }
+      })
+
+      const gamesData = gamesDataResult.data || []
+
+      // Create a map of game data
+      const gamesMap = new Map()
+      gamesData.forEach(game => {
+        gamesMap.set(game.id, game)
+      })
+
+      // Fetch team and season names separately with timeouts
+      const gameTeamIds = [...new Set(gamesData.map(g => g.team_id).filter(Boolean))].slice(0, 10)
+      const gameSeasonIds = [...new Set(gamesData.map(g => g.season_id).filter(Boolean))].slice(0, 10)
+
+      const [teamsResult, seasonsResult] = await Promise.all([
+        gameTeamIds.length > 0 
+          ? withVideoTimeout(
+              supabase.from('icepulse_teams').select('id, name').in('id', gameTeamIds).limit(10),
+              5000
+            ).catch(err => {
+              console.error('🎥 Teams query timeout:', err)
+              return { data: [], error: err }
+            })
+          : Promise.resolve({ data: [], error: null }),
+        gameSeasonIds.length > 0
+          ? withVideoTimeout(
+              supabase.from('icepulse_seasons').select('id, name').in('id', gameSeasonIds).limit(10),
+              5000
+            ).catch(err => {
+              console.error('🎥 Seasons query timeout:', err)
+              return { data: [], error: err }
+            })
+          : Promise.resolve({ data: [], error: null })
+      ])
+
+      const teamsMap = new Map()
+      if (teamsResult.data) {
+        teamsResult.data.forEach(team => teamsMap.set(team.id, team.name))
+      }
+
+      const seasonsMap = new Map()
+      if (seasonsResult.data) {
+        seasonsResult.data.forEach(season => seasonsMap.set(season.id, season.name))
+      }
+
+      // Format videos with game/team/season data (use limited videos)
+      const formattedVideos = limitedVideos.map(video => {
+        const game = gamesMap.get(video.game_id)
+        const teamName = game?.team_id ? teamsMap.get(game.team_id) : null
+        const seasonName = game?.season_id ? seasonsMap.get(game.season_id) : null
+
+        // Format video URL properly
+        let videoUrl = video.video_url
+        if (videoUrl && !videoUrl.startsWith('http')) {
+          // If it's a storage path, get the public URL
+          videoUrl = supabase.storage.from('videos').getPublicUrl(videoUrl).data.publicUrl
+        }
+
+        let thumbnailUrl = video.thumbnail_url
+        if (thumbnailUrl && !thumbnailUrl.startsWith('http')) {
+          thumbnailUrl = supabase.storage.from('videos').getPublicUrl(thumbnailUrl).data.publicUrl
+        }
+
+        return {
+          ...video,
+          video_url: videoUrl,
+          thumbnail_url: thumbnailUrl,
+          game: game ? {
+            ...game,
+            teamName,
+            seasonName,
+            gameDate: game.game_date,
+            gameTime: game.game_time,
+          } : null,
+          userName: 'Unknown User' // We can fetch this separately if needed
+        }
+      })
+
+      console.log('🎥 getPlayerVideos: Returning', formattedVideos.length, 'formatted videos')
+      return formattedVideos
+    } catch (error) {
+      console.error('Error in getPlayerVideos:', error)
+      return []
+    }
+  }
+
   const value = {
     players,
     addPlayer,
@@ -866,6 +1157,7 @@ export function IndividualProvider({ children }) {
     updateTeam,
     deleteTeam,
     isLoading,
+    getPlayerVideos,
   }
 
   return <IndividualContext.Provider value={value}>{children}</IndividualContext.Provider>
