@@ -148,8 +148,8 @@ function StreamViewer({ streamId }) {
 
       // Poll the manifest until ready (avoid 204 empty responses). Try all candidates.
       const waitForManifest = async () => {
-        const maxAttempts = 60 // up to ~120s (2s intervals)
-        console.log(`📡 [VIEWER] Starting manifest polling for ${uniqueCandidates.length} URLs (max 120s)...`)
+        const maxAttempts = 120 // up to ~240s (2s intervals) - increased for Cloudflare's live manifest generation
+        console.log(`📡 [VIEWER] Starting manifest polling for ${uniqueCandidates.length} URLs (max 240s)...`)
         
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           if (cancelled) return null
@@ -175,8 +175,16 @@ function StreamViewer({ streamId }) {
                 return url
               }
               
-              if (attempt % 5 === 0) {
+              // Log more frequently for first 30 attempts to track progress
+              if (attempt <= 30 && attempt % 3 === 0) {
                 console.log(`📡 [VIEWER] Polling attempt ${attempt}/${maxAttempts}: ${res.status} for ${url.substring(0, 50)}...`)
+              } else if (attempt % 10 === 0) {
+                console.log(`📡 [VIEWER] Polling attempt ${attempt}/${maxAttempts}: ${res.status} for ${url.substring(0, 50)}...`)
+              }
+              
+              // If still getting 204 after 60 attempts, warn that it's taking longer than expected
+              if (attempt === 60 && res.status === 204) {
+                console.warn('⚠️ [VIEWER] Still receiving 204 after 2 minutes. This is longer than expected. Check Cloudflare dashboard to verify stream is receiving data.')
               }
             } catch (e) {
               // Only log errors every 10 attempts to reduce noise
