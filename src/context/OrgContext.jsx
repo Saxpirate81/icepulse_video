@@ -4,6 +4,7 @@ import { getAdminClient } from '../lib/supabase-admin'
 import { useAuth } from './AuthContext'
 import { USE_MOCK } from '../lib/supabase-mock'
 import { mockOrganization, mockOrganizations, mockResponses } from '../lib/mock-data'
+import * as tus from 'tus-js-client'
 
 const OrgContext = createContext(null)
 
