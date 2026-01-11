@@ -1160,13 +1160,46 @@ function VideoRecorder() {
         
         console.log('✅ [WHIP] Handshake Complete (waiting for connection state to reach "connected")')
         
+        // Track start time for monitoring
+        const startTime = Date.now()
+        
         // Add a monitor interval to ensure media stays flowing
-        const monitorId = setInterval(() => {
+        const monitorId = setInterval(async () => {
           if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
             console.error(`❌ [WHIP] Connection lost! State: ${pc.connectionState}`)
             clearInterval(monitorId)
           } else {
-            console.log(`📡 [WHIP] Connection Monitor: State=${pc.connectionState}, ICE=${pc.iceConnectionState}`)
+            // Check actual data transmission stats
+            try {
+              const stats = await pc.getStats()
+              let videoBytesSent = 0
+              let audioBytesSent = 0
+              let videoPacketsSent = 0
+              let audioPacketsSent = 0
+              
+              stats.forEach(report => {
+                if (report.type === 'outbound-rtp') {
+                  if (report.mediaType === 'video') {
+                    videoBytesSent += report.bytesSent || 0
+                    videoPacketsSent += report.packetsSent || 0
+                  } else if (report.mediaType === 'audio') {
+                    audioBytesSent += report.bytesSent || 0
+                    audioPacketsSent += report.packetsSent || 0
+                  }
+                }
+              })
+              
+              const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+              console.log(`📡 [WHIP] Connection Monitor (${elapsedSeconds}s): State=${pc.connectionState}, ICE=${pc.iceConnectionState}, Video=${(videoBytesSent/1024).toFixed(1)}KB (${videoPacketsSent} pkts), Audio=${(audioBytesSent/1024).toFixed(1)}KB (${audioPacketsSent} pkts)`)
+              
+              // Warn if no video data after 30 seconds
+              if (videoBytesSent === 0 && elapsedSeconds > 30) {
+                console.warn('⚠️ [WHIP] No video bytes sent after 30 seconds - browser may be throttling the stream! Keep the recorder tab visible and active.')
+              }
+            } catch (e) {
+              const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+              console.log(`📡 [WHIP] Connection Monitor (${elapsedSeconds}s): State=${pc.connectionState}, ICE=${pc.iceConnectionState}`)
+            }
           }
         }, 10000)
 
