@@ -9,6 +9,7 @@ export default defineConfig({
   },
   resolve: {
     dedupe: ['tus-js-client', 'hls.js'],
+    preserveSymlinks: false,
   },
   build: {
     commonjsOptions: {
