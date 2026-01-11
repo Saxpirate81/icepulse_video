@@ -7,9 +7,18 @@ export default defineConfig({
   optimizeDeps: {
     include: ['tus-js-client', 'hls.js'],
   },
+  resolve: {
+    dedupe: ['tus-js-client', 'hls.js'],
+  },
   build: {
     commonjsOptions: {
       include: [/tus-js-client/, /hls\.js/, /node_modules/],
+      transformMixedEsModules: true,
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
     },
   },
 })
