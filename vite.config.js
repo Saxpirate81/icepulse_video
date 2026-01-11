@@ -5,11 +5,11 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    include: ['tus-js-client'],
+    include: ['tus-js-client', 'hls.js'],
   },
   build: {
     commonjsOptions: {
-      include: [/tus-js-client/, /node_modules/],
+      include: [/tus-js-client/, /hls\.js/, /node_modules/],
     },
   },
 })
