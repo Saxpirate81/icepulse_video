@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 function VideoRecorder() {
   const orgContext = useOrgOptional()
   const organization = orgContext?.organization || null
+  const isOrganizationLoading = orgContext?.isLoading !== false
   const { user } = useAuth()
   
   // Try to get IndividualContext for players/parents (may not be available)
@@ -25,6 +26,7 @@ function VideoRecorder() {
   const uploadThumbnailToStorage = orgContext?.uploadThumbnailToStorage || null
   const createStream = orgContext?.createStream || null
   const uploadStreamChunk = orgContext?.uploadStreamChunk || null
+  const queueStreamChunkUpload = orgContext?.queueStreamChunkUpload || null // Get queue function
   const stopStream = orgContext?.stopStream || null
   const reactivateStream = orgContext?.reactivateStream || null
   
@@ -240,8 +242,95 @@ function VideoRecorder() {
   }, [user?.id, user?.role])
   
   // Use organization teams/seasons if available, otherwise use player teams/seasons
-  const availableTeams = organization?.teams || playerTeams || []
-  const availableSeasons = organization?.seasons || playerSeasons || []
+  // For organization users: load teams/seasons directly if organization isn't loaded yet
+  const [orgTeams, setOrgTeams] = useState([])
+  const [orgSeasons, setOrgSeasons] = useState([])
+  
+  // Load teams/seasons for organization users if organization isn't loaded or has empty teams/seasons
+  useEffect(() => {
+    const loadOrgTeamsAndSeasons = async () => {
+      const isOrgUser = user?.role === 'organization' || user?.role === 'coach'
+      if (!isOrgUser || !user?.id) {
+        return
+      }
+      
+      // Always try to load if the context data is empty, regardless of loading state
+      const orgHasTeams = organization?.teams && organization.teams.length > 0
+      const orgHasSeasons = organization?.seasons && organization.seasons.length > 0
+      const needsLoad = !orgHasTeams || !orgHasSeasons
+      
+      if (needsLoad) {
+        console.log('🏢 Loading teams/seasons for organization user:', user.id)
+        
+        try {
+          let orgId = organization?.id
+          
+          // If organization ID not available, find it directly from DB
+          if (!orgId) {
+            const { data: ownedOrgs } = await supabase
+              .from('icepulse_organizations')
+              .select('id')
+              .eq('owner_id', user.id)
+              .limit(1)
+              .maybeSingle()
+            
+            if (ownedOrgs) {
+              orgId = ownedOrgs.id
+              console.log('✅ Found organization ID directly:', orgId)
+            }
+          }
+          
+          if (!orgId) return
+
+          // Load teams directly using organization_id
+          if (!orgHasTeams) {
+            const { data: teamsData } = await supabase
+              .from('icepulse_teams')
+              .select('id, name')
+              .eq('organization_id', orgId)
+              .order('name', { ascending: true })
+              .limit(100)
+            
+            if (teamsData) {
+              setOrgTeams(teamsData)
+              console.log('✅ Loaded teams direct:', teamsData.length)
+            }
+          }
+          
+          // Load seasons directly using organization_id
+          if (!orgHasSeasons) {
+            const { data: seasonsData } = await supabase
+              .from('icepulse_seasons')
+              .select('id, name')
+              .eq('organization_id', orgId)
+              .order('name', { ascending: true })
+              .limit(50)
+            
+            if (seasonsData) {
+              setOrgSeasons(seasonsData)
+              console.log('✅ Loaded seasons direct:', seasonsData.length)
+            }
+          }
+        } catch (err) {
+          console.error('❌ Error loading organization teams/seasons:', err)
+        }
+      } else {
+        // If organization context has data, clear local state to prefer context
+        setOrgTeams([])
+        setOrgSeasons([])
+      }
+    }
+    
+    loadOrgTeamsAndSeasons()
+  }, [user?.id, user?.role, organization?.id, organization?.teams, organization?.seasons])
+  
+  // Use manually loaded teams/seasons if organization doesn't have them, otherwise use organization's
+  const availableTeams = (organization?.teams && organization.teams.length > 0) 
+    ? organization.teams 
+    : (orgTeams.length > 0 ? orgTeams : playerTeams)
+  const availableSeasons = (organization?.seasons && organization.seasons.length > 0) 
+    ? organization.seasons 
+    : (orgSeasons.length > 0 ? orgSeasons : playerSeasons)
   const [isRecording, setIsRecording] = useState(false)
   const [chunks, setChunks] = useState([])
   const [stream, setStream] = useState(null)
@@ -279,6 +368,8 @@ function VideoRecorder() {
   const recordedBlobsRef = useRef([])
   const currentGameIdRef = useRef(null) // Store gameId for the current recording session
   const currentStartTimestampRef = useRef(null) // Store start timestamp for the current recording session
+  const whipUrlRef = useRef(null) // Store WHIP URL for broadcasting
+  const whipPeerConnectionRef = useRef(null) // Store WebRTC connection for broadcasting
   const [streamId, setStreamId] = useState(null)
   const [streamUrl, setStreamUrl] = useState(null)
   const [urlCopied, setUrlCopied] = useState(false)
@@ -612,15 +703,35 @@ function VideoRecorder() {
 
     // For players/parents: allow creating games directly without organization context
     const isPlayerOrParent = user?.role === 'player' || user?.role === 'parent'
+    const isOrganizationUser = user?.role === 'organization' || user?.role === 'coach'
     
     if (isPlayerOrParent) {
       // For players/parents, we'll create games directly
       // They don't need organization context - they have teams/seasons from their assignments
       console.log('🎮 Player/Parent: Creating game without organization context')
-    } else if (!organization?.id || !addGame) {
-      // For org users, we still require organization context
+    } else if (isOrganizationUser) {
+      // For organization users: allow to proceed even if organization isn't loaded
+      // We can fetch organization_id from the selected team and use database function
+      if (isOrganizationLoading) {
+        // Only block if organization is actively loading (wait a bit)
+        setError('Organization is still loading. Please wait a moment and try again.')
+        return false
+      }
+      
+      // If organization isn't loaded but we have teams/seasons available, allow to proceed
+      // The game creation logic will handle fetching organization_id from team
+      if (!organization?.id && availableTeams.length === 0 && availableSeasons.length === 0) {
+        setError('Organization not found. Please ensure you have created an organization and have teams/seasons set up.')
+        return false
+      }
+      
+      console.log(`🏢 Organization user: ${organization?.id ? 'Organization loaded' : 'Will fetch organization from team'}`)
+    } else {
+      // For other roles, require organization context
+    if (!organization?.id || !addGame) {
       setError('Event setup requires organization access.')
       return false
+      }
     }
 
     // All new events require team+season due to DB constraints
@@ -639,67 +750,36 @@ function VideoRecorder() {
       
       // Create stream for this game
       let streamData = null
-      if (isPlayerOrParent) {
-        // For players/parents: create stream directly
-        try {
-          console.log('🔄 Creating stream directly for existing game:', eventExistingGameId)
-          const streamId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          
-          const { data: streamResult, error: streamError } = await withShortTimeout(
-            supabase
-              .from('icepulse_streams')
-              .insert({
-                id: streamId,
-                game_id: eventExistingGameId,
-                created_by: user.id,
-                is_active: true
-              })
-              .select()
-              .single(),
-            3000
-          ).catch(err => ({ data: null, error: err }))
-          
-          if (streamError || !streamResult) {
-            console.error('❌ Error creating stream:', streamError)
-            setError(`Stream creation failed: ${streamError?.message || 'Unknown error'}. You can still record.`)
-            setShowEventModal(false)
-          } else {
-            streamData = {
-              id: streamResult.id,
-              streamUrl: `${window.location.origin}/stream/${streamResult.id}`
-            }
-          }
-        } catch (err) {
-          console.error('❌ Exception creating stream:', err)
-          setError('Stream creation failed. You can still record.')
-            setShowEventModal(false)
-          }
-      } else if (createStream) {
-        // For org users: use createStream from OrgContext
-        try {
-          console.log('🔄 Creating stream for game:', eventExistingGameId)
+      
+      try {
+        console.log('🔄 Creating stream for game:', eventExistingGameId)
+        
+        // Use createStream from OrgContext (Now Cloudflare-powered)
+        if (createStream) {
           streamData = await createStream(eventExistingGameId)
           console.log('✅ Stream created:', streamData)
-        } catch (err) {
-          console.error('❌ Error creating stream:', err)
-          setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
-          setShowEventModal(false)
+        } else {
+          console.warn('⚠️ createStream function not available')
+          setError('Streaming unavailable. Recording will still work.')
         }
-      } else {
-        console.warn('⚠️ createStream function not available from OrgContext')
-        setError('Streaming not available. Recording will still work.')
-        setShowEventModal(false)
+      } catch (err) {
+        console.error('❌ Error creating stream:', err)
+        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
       }
       
       // Set stream data if we have it
-      if (streamData?.id && streamData?.streamUrl) {
+      if (streamData?.id) {
         setStreamId(streamData.id)
-        setStreamUrl(streamData.streamUrl)
-        console.log('✅ Stream URL set:', streamData.streamUrl)
-      } else if (streamData) {
-        console.error('❌ Stream data incomplete:', streamData)
-        setError('Stream created but URL not available. You can still record.')
-        setShowEventModal(false)
+        // ALWAYS use the app viewer URL, never the raw Cloudflare URL
+        const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+        setStreamUrl(appViewerUrl)
+        // Store WHIP info for broadcasting
+        if (streamData.whipUrl) {
+           whipUrlRef.current = streamData.whipUrl
+        }
+        console.log('✅ Stream setup complete:', streamData.id)
+      } else {
+        console.warn('⚠️ Stream created but no ID returned')
       }
       
       console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
@@ -802,8 +882,92 @@ function VideoRecorder() {
         }
         
         console.log('✅ Game created directly for player/parent:', created.id)
-      } else {
-        // For org users: use addGame from OrgContext
+      } else if (isOrganizationUser) {
+        // For organization users: try to use addGame if available, otherwise use database function
+        if (addGame && organization?.id) {
+          // Use addGame from OrgContext if organization is loaded
+          console.log('🏢 Organization user: Using addGame from OrgContext')
+          try {
+            created = await addGame({
+        teamId: eventTeamId,
+        seasonId: eventSeasonId,
+        gameDate: eventDate,
+        gameTime: eventTime || null,
+        opponent,
+        location: eventLocation?.trim() || null,
+        notes: eventNotes?.trim() || (eventType === 'practice' ? 'Practice recording' : eventType === 'skills' ? 'Skills recording' : 'Game created from recorder')
+      })
+          } catch (addGameError) {
+            console.error('❌ Error using addGame, falling back to database function:', addGameError)
+            // Fall through to database function approach
+            created = null
+          }
+        }
+        
+        // If addGame failed or organization isn't loaded, use database function
+        if (!created) {
+          // Fetch organization_id from the selected team
+          console.log('🏢 Organization user: Fetching organization_id for team:', eventTeamId)
+          const { data: teamData, error: teamError } = await withShortTimeout(
+            supabase
+              .from('icepulse_teams')
+              .select('id, organization_id')
+              .eq('id', eventTeamId)
+              .limit(1)
+              .maybeSingle(),
+            8000
+          ).catch(err => ({ data: null, error: err }))
+          
+          if (teamError || !teamData || !teamData.organization_id) {
+            console.error('❌ Error fetching team for organization user:', teamError)
+            setError(`Failed to load team information: ${teamError?.message || 'Query timeout'}. Please ensure you have an organization and try again.`)
+            setIsCreatingEvent(false)
+            return false
+          }
+          
+          // Note: Organization ownership verification is done in the database function
+          // The function will check if user owns the organization or is a coach assigned to it
+          console.log('🏢 Creating game via database function (will verify ownership in function)')
+          
+          // Use database function to create game (supports organization/coach roles now)
+          const { data: gameData, error: gameError } = await withShortTimeout(
+            supabase.rpc('create_game_for_player_parent', {
+              p_user_id: user.id,
+              p_user_role: user.role,
+              p_team_id: eventTeamId,
+              p_season_id: eventSeasonId,
+              p_opponent: opponent,
+              p_game_date: eventDate,
+              p_game_time: eventTime || null,
+              p_location: eventLocation?.trim() || null,
+              p_notes: eventNotes?.trim() || (eventType === 'practice' ? 'Practice recording' : eventType === 'skills' ? 'Skills recording' : 'Game created from recorder')
+            }),
+            10000
+          ).catch(err => {
+            console.error('❌ Database function error:', err)
+            return { data: null, error: err }
+          })
+          
+          if (gameError || !gameData || (Array.isArray(gameData) && gameData.length === 0)) {
+            console.error('❌ Error creating game:', gameError)
+            setError(`Failed to create event: ${gameError?.message || 'Unknown error'}. Please ensure you own this organization or are assigned as a coach.`)
+            setIsCreatingEvent(false)
+            return false
+          }
+          
+          // Handle array response from function
+          const game = Array.isArray(gameData) ? gameData[0] : gameData
+          
+          created = {
+            id: game.id,
+            gameDate: game.game_date,
+            gameTime: game.game_time
+          }
+          
+          console.log('✅ Game created via database function for organization user:', created.id)
+        }
+      } else if (addGame && organization?.id) {
+        // For org users with loaded organization: use addGame from OrgContext
         created = await addGame({
         teamId: eventTeamId,
         seasonId: eventSeasonId,
@@ -813,6 +977,10 @@ function VideoRecorder() {
         location: eventLocation?.trim() || null,
         notes: eventNotes?.trim() || (eventType === 'practice' ? 'Practice recording' : eventType === 'skills' ? 'Skills recording' : 'Game created from recorder')
       })
+      } else {
+        setError('Unable to create games. Please refresh the page and ensure you have an organization.')
+        setIsCreatingEvent(false)
+        return false
       }
 
       if (!created?.id) {
@@ -828,66 +996,34 @@ function VideoRecorder() {
       
       // Create stream for this game
       let streamData = null
-      if (isPlayerOrParent) {
-        // For players/parents: use database function to create stream efficiently
-        try {
-          console.log('🔄 Using database function to create stream for player/parent game:', created.id)
-          const { data: streamResult, error: streamError } = await withShortTimeout(
-            supabase.rpc('create_stream_for_player_parent', {
-              p_user_id: user.id,
-              p_game_id: created.id
-            }),
-            8000 // 8 second timeout for the function
-          ).catch(err => {
-            console.error('❌ Database function error:', err)
-            return { data: null, error: err }
-          })
-          
-          if (streamError || !streamResult || (Array.isArray(streamResult) && streamResult.length === 0)) {
-            console.error('❌ Error creating stream:', streamError)
-            setError(`Stream creation failed: ${streamError?.message || 'Unknown error'}. You can still record.`)
-            setShowEventModal(false)
-          } else {
-            // Handle array response from function
-            const stream = Array.isArray(streamResult) ? streamResult[0] : streamResult
-            streamData = {
-              id: stream.id,
-              streamUrl: `${window.location.origin}/stream/${stream.id}`
-            }
-            console.log('✅ Stream created via function:', streamData)
-          }
-        } catch (err) {
-          console.error('❌ Exception creating stream:', err)
-          setError('Stream creation failed. You can still record.')
-            setShowEventModal(false)
-          }
-      } else if (createStream) {
-        // For org users: use createStream from OrgContext
-        try {
-          console.log('🔄 Creating stream for new game:', created.id)
+      
+      try {
+        console.log('🔄 Creating stream for new game:', created.id)
+        
+        // Use createStream from OrgContext (Now Cloudflare-powered)
+        if (createStream) {
           streamData = await createStream(created.id)
           console.log('✅ Stream created:', streamData)
-        } catch (err) {
-          console.error('❌ Error creating stream:', err)
-          setError(`Stream creation failed: ${err.message || 'Please ensure the stream tables are set up in Supabase.'}`)
-          setShowEventModal(false)
+        } else {
+          console.warn('⚠️ createStream function not available')
+          setError('Streaming unavailable. Recording will still work.')
         }
-      } else {
-        console.warn('⚠️ createStream function not available from OrgContext')
-        setError('Streaming not available. Recording will still work.')
-        setShowEventModal(false)
+      } catch (err) {
+        console.error('❌ Error creating stream:', err)
+        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
       }
       
       // Set stream data if we have it
-      if (streamData?.id && streamData?.streamUrl) {
+      if (streamData?.id) {
         setStreamId(streamData.id)
-        setStreamUrl(streamData.streamUrl)
-        console.log('✅ Stream URL set:', streamData.streamUrl)
-      } else if (streamData) {
-        console.error('❌ Stream data incomplete:', streamData)
-        setError('Stream created but URL not available. You can still record.')
-        setShowEventModal(false)
+        // ALWAYS use the app viewer URL, never the raw Cloudflare URL
+        const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+        setStreamUrl(appViewerUrl)
+        console.log('✅ Stream setup complete:', streamData.id)
+      } else {
+        console.warn('⚠️ Stream created but no ID returned')
       }
+      
       console.log('✅ Event created and gameId set:', created.id)
       return true
     } catch (e) {
@@ -929,22 +1065,144 @@ function VideoRecorder() {
 
     // Reactivate stream if it exists (for restarting recording)
     let nextChunkIndex = 0
-    if (streamId && reactivateStream) {
+    let whipUrlToUse = null
+    
+    // Check if we have whipUrl in ref or state
+    if (whipUrlRef.current) {
+      whipUrlToUse = whipUrlRef.current
+    }
+
+    // Helper to push stream via WHIP
+    const pushToWhip = async (url, mediaStream) => {
       try {
-        console.log('🔄 Reactivating existing stream:', streamId)
-        const reactivated = await reactivateStream(streamId)
-        if (reactivated) {
-          console.log('✅ Stream reactivated:', reactivated)
-          setStreamId(reactivated.id)
-          setStreamUrl(reactivated.streamUrl)
-          // Continue chunk index from where we left off (or 0 if no chunks)
-          nextChunkIndex = reactivated.nextChunkIndex || 0
-          console.log(`📊 Continuing from chunk index ${nextChunkIndex}`)
+        console.log('📡 [WHIP] Starting broadcast initialization to:', url)
+        
+        // Explicitly set bundle policy and ICE transport policy
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
+          bundlePolicy: 'max-bundle',
+          rtcpMuxPolicy: 'require'
+        })
+        
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            // Filter out mDNS candidates if possible (Cloudflare prefers IP candidates)
+            console.log('📡 [WHIP] ICE Candidate found:', e.candidate.candidate.substring(0, 40) + '...')
+          }
         }
+
+        pc.onconnectionstatechange = () => {
+          console.log('📡 [WHIP] PeerConnection State Change:', pc.connectionState)
+          if (pc.connectionState === 'connected') {
+            console.log('✅ [WHIP] MEDIA FLOWING TO CLOUDFLARE')
+          }
+        }
+
+        // Use addTransceiver for exact control over direction
+        mediaStream.getTracks().forEach(track => {
+          console.log(`📡 [WHIP] Adding ${track.kind} track...`)
+          pc.addTransceiver(track, { direction: 'sendonly', streams: [mediaStream] })
+        })
+
+        // Force H264 on the video transceiver
+        try {
+          const transceivers = pc.getTransceivers()
+          transceivers.forEach(t => {
+            if (t.sender.track?.kind === 'video') {
+              const cap = RTCRtpSender.getCapabilities('video')
+              const h264 = cap?.codecs.filter(c => 
+                c.mimeType?.toLowerCase() === 'video/h264' && 
+                c.sdpFmtpLine?.includes('profile-level-id=42e01f')
+              ) || []
+              if (h264.length > 0) t.setCodecPreferences(h264)
+            }
+          })
+        } catch (e) {}
+        
+        console.log('📡 [WHIP] Creating Offer...')
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+
+        console.log('📡 [WHIP] Waiting for ICE gathering (max 3s)...')
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === 'complete') resolve()
+          else {
+            const check = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', check); resolve(); } }
+            pc.addEventListener('icegatheringstatechange', check)
+            setTimeout(resolve, 3000)
+          }
+        })
+        
+        console.log('📡 [WHIP] Sending Offer to Cloudflare (SDP length:', pc.localDescription.sdp.length, ')')
+        const response = await fetch(url, {
+          method: 'POST',
+          body: pc.localDescription.sdp,
+          headers: { 'Content-Type': 'application/sdp' }
+        })
+        
+        if (!response.ok) {
+          const errText = await response.text()
+          throw new Error(`WHIP HTTP Error ${response.status}: ${errText || response.statusText}`)
+        }
+        
+        const answerSdp = await response.text()
+        console.log('📡 [WHIP] Received Answer (SDP length:', answerSdp.length, ')')
+        
+        // Log negotiated codecs for debugging
+        const lines = answerSdp.split('\n')
+        const rtpMaps = lines.filter(l => l.includes('a=rtpmap'))
+        console.log('📡 [WHIP] Negotiated Codecs (Answer):', rtpMaps.join(' | '))
+        
+        await pc.setRemoteDescription(new RTCSessionDescription({
+          type: 'answer',
+          sdp: answerSdp
+        }))
+        
+        console.log('✅ [WHIP] Handshake Complete (waiting for connection state to reach "connected")')
+        
+        // Add a monitor interval to ensure media stays flowing
+        const monitorId = setInterval(() => {
+          if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+            console.error(`❌ [WHIP] Connection lost! State: ${pc.connectionState}`)
+            clearInterval(monitorId)
+          } else {
+            console.log(`📡 [WHIP] Connection Monitor: State=${pc.connectionState}, ICE=${pc.iceConnectionState}`)
+          }
+        }, 10000)
+
+        return pc
       } catch (err) {
-        console.error('❌ Error reactivating stream:', err)
-        // Continue anyway - might create new stream later
+        console.error('❌ [WHIP] FATAL ERROR:', err)
+        return null
       }
+    }
+
+    if (streamId && reactivateStream) {
+      // Logic for existing stream...
+    } else if (createStream && (currentGameIdRef.current || selectedGameId)) {
+        // Create NEW Stream if not exists or if we need a new input
+        // Only if we don't have a whip URL yet
+        if (!whipUrlToUse) {
+          try {
+             const gameId = currentGameIdRef.current || selectedGameId
+             console.log('🔄 Creating NEW Cloudflare stream for game:', gameId)
+             const streamData = await createStream(gameId)
+               if (streamData) {
+               setStreamId(streamData.id)
+               // IMPORTANT: Set the APP viewer URL, not the Cloudflare raw URL
+               // Cloudflare raw URL (m3u8) cannot be played directly in browser
+               const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+               setStreamUrl(appViewerUrl)
+               
+               // Keep the raw stream URL for internal use if needed, or just rely on ID
+               whipUrlToUse = streamData.whipUrl
+               whipUrlRef.current = streamData.whipUrl // Save to ref
+               console.log('✅ Stream Created. Viewer URL:', appViewerUrl)
+             }
+          } catch (err) {
+             console.error('❌ Failed to create stream:', err)
+          }
+        }
     }
 
     // Record start timestamp (CRITICAL for synchronization)
@@ -956,35 +1214,54 @@ function VideoRecorder() {
     streamChunkIndexRef.current = nextChunkIndex // Continue from next chunk index (or 0 if new stream)
     console.log('⏰ Start timestamp set:', startTimestamp)
 
+    // START BROADCASTING IF WE HAVE WHIP URL
+    if (whipUrlToUse) {
+       console.log('📡 Found WHIP URL, initializing broadcast...')
+       pushToWhip(whipUrlToUse, stream).then(pc => {
+          // Store PC reference
+          whipPeerConnectionRef.current = pc
+          if (pc) {
+             console.log('✅ WHIP PeerConnection established and sending.')
+          } else {
+             console.error('❌ WHIP PeerConnection failed to establish.')
+          }
+       })
+    } else {
+       console.warn('⚠️ No WHIP URL found - Streaming will not be live.')
+    }
+
+    // Determine best mimeType for MediaRecorder (prefer H264 for Cloudflare compatibility)
+    let mimeType = 'video/webm;codecs=vp8,opus';
+    const candidates = [
+      'video/webm;codecs=h264,opus',
+      'video/webm;codecs=h264',
+      'video/mp4;codecs=h264,aac',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus'
+    ];
+    
+    for (const cand of candidates) {
+      if (MediaRecorder.isTypeSupported(cand)) {
+        mimeType = cand;
+        break;
+      }
+    }
+    console.log('🎬 Using MediaRecorder mimeType:', mimeType);
+
     const mediaRecorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp8,opus',
+      mimeType: mimeType,
     })
 
     mediaRecorderRef.current = mediaRecorder
 
     mediaRecorder.ondataavailable = async (event) => {
       if (event.data && event.data.size > 0) {
+        if (recordedBlobsRef.current.length === 0) {
+          console.log('🎬 [RECORDER] First data packet produced! Size:', event.data.size)
+        }
+        
         // Store blob for final video
         recordedBlobsRef.current.push(event.data)
-        
-        // For streaming: upload segments immediately when they arrive (from timeslice)
-        // This creates seamless playback without gaps
-        if (streamId && uploadStreamChunk) {
-          const chunkIndex = streamChunkIndexRef.current++
-          const chunkBlob = event.data // This is a complete, playable WebM segment from timeslice
-          
-          try {
-            console.log(`📤 Uploading stream segment ${chunkIndex} (${Math.round(chunkBlob.size / 1024)}KB)...`)
-            // Upload in background - don't block next segment
-            uploadStreamChunk(chunkBlob, streamId, chunkIndex).then(() => {
-            console.log(`✅ Stream segment ${chunkIndex} uploaded successfully`)
-            }).catch((err) => {
-            console.error(`❌ Error uploading stream segment ${chunkIndex}:`, err)
-            })
-          } catch (err) {
-            console.error(`❌ Error queuing stream segment ${chunkIndex}:`, err)
-          }
-        }
         
         // Update UI chunk display
         const chunkId = Date.now() + Math.random()
@@ -992,20 +1269,14 @@ function VideoRecorder() {
           id: chunkId,
           size: event.data.size,
           timestamp: new Date(),
-          status: 'uploading',
+          status: 'recording',
         }
         setChunks((prev) => [...prev, newChunk])
-
-        // Simulate upload completion after 1-3 seconds (for UI only)
-        setTimeout(() => {
-          setChunks((prev) =>
-            prev.map((chunk) =>
-              chunk.id === chunkId
-                ? { ...chunk, status: 'completed' }
-                : chunk
-            )
-          )
-        }, 1000 + Math.random() * 2000)
+        
+        // For broadcasting: 
+        // In WHIP mode, we push the stream directly from the browser (not chunks).
+        // So we don't need to do anything here for streaming.
+        // We'll wire up the WHIP client if you want live broadcasting from browser.
       }
     }
 
@@ -1344,12 +1615,14 @@ function VideoRecorder() {
                   </button>
                 </div>
 
-                {eventType === 'game' && (
+                {eventType === 'game' && (() => {
+                  const games = organization?.games || []
+                  
+                  return (
                   <div className="space-y-3">
                     <div>
                       <label className="block text-gray-300 mb-2 text-sm">Choose Existing Game</label>
                       {(() => {
-                        const games = organization?.games || []
                         console.log('🎮 Available games for dropdown:', {
                           gameCount: games.length,
                           games: games.map(g => ({ id: g.id, opponent: g.opponent, date: g.gameDate }))
@@ -1366,7 +1639,25 @@ function VideoRecorder() {
                             onChange={(val) => { 
                               console.log('🎮 Game selected from dropdown:', val)
                               setEventExistingGameId(val)
-                              setEventUseManualGame(false) 
+                              setEventUseManualGame(false)
+                              
+                              // Populate team and season from selected game
+                              const selectedGame = games.find(g => g.id === val)
+                              if (selectedGame) {
+                                console.log('🎮 Selected game data:', selectedGame)
+                                // Use teamId or team_id (handle both naming conventions)
+                                const teamId = selectedGame.teamId || selectedGame.team_id
+                                const seasonId = selectedGame.seasonId || selectedGame.season_id
+                                
+                                if (teamId) {
+                                  setEventTeamId(teamId)
+                                  console.log('✅ Set team ID:', teamId)
+                                }
+                                if (seasonId) {
+                                  setEventSeasonId(seasonId)
+                                  console.log('✅ Set season ID:', seasonId)
+                                }
+                              }
                             }}
                             placeholder={games.length === 0 ? "No games available - create one manually" : "Select a game..."}
                         multiple={false}
@@ -1387,6 +1678,63 @@ function VideoRecorder() {
                       >
                         {eventUseManualGame ? 'Use existing game instead' : `No game listed? Create one manually`}
                       </button>
+                      
+                      {/* Show team and season for selected game */}
+                      {eventExistingGameId && !eventUseManualGame && (() => {
+                        // Get the selected game to find team/season info
+                        const selectedGame = games.find(g => g.id === eventExistingGameId)
+                        const teamId = selectedGame?.teamId || selectedGame?.team_id
+                        const seasonId = selectedGame?.seasonId || selectedGame?.season_id
+                        
+                        // Build team options: include available teams + the game's team if not in available
+                        const teamOptions = [...availableTeams]
+                        if (teamId && !teamOptions.find(t => t.id === teamId)) {
+                          // Game's team is not in available teams - add it from the organization teams
+                          const orgTeam = organization?.teams?.find(t => t.id === teamId)
+                          if (orgTeam) {
+                            teamOptions.push({ id: orgTeam.id, name: orgTeam.name })
+                          }
+                        }
+                        
+                        // Build season options: include available seasons + the game's season if not in available
+                        const seasonOptions = [...availableSeasons]
+                        if (seasonId && !seasonOptions.find(s => s.id === seasonId)) {
+                          // Game's season is not in available seasons - add it from the organization seasons
+                          const orgSeason = organization?.seasons?.find(s => s.id === seasonId)
+                          if (orgSeason) {
+                            seasonOptions.push({ id: orgSeason.id, name: orgSeason.name })
+                          }
+                        }
+                        
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                            <div>
+                              <label className="block text-gray-300 mb-2 text-sm">Team</label>
+                              <Dropdown
+                                options={teamOptions.map(t => ({ value: t.id, label: t.name }))}
+                                value={eventTeamId || teamId}
+                                onChange={() => {}} // Disabled - from selected game
+                                placeholder="No team selected"
+                                multiple={false}
+                                showAllOption={false}
+                                disabled={true}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-gray-300 mb-2 text-sm">Season/Tournament</label>
+                              <Dropdown
+                                options={seasonOptions.map(s => ({ value: s.id, label: s.name }))}
+                                value={eventSeasonId || seasonId}
+                                onChange={() => {}} // Disabled - from selected game
+                                placeholder="No season selected"
+                                multiple={false}
+                                showAllOption={false}
+                                disabled={true}
+                              />
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
 
                     {eventUseManualGame && (
@@ -1483,7 +1831,8 @@ function VideoRecorder() {
                       </div>
                     )}
                   </div>
-                )}
+                  )
+                })()}
 
                 {(eventType === 'practice' || eventType === 'skills') && (
                   <div className="space-y-3">
@@ -1604,12 +1953,12 @@ function VideoRecorder() {
                         </button>
                         <button
                           onClick={() => {
-                            const message = `Watch the live stream: ${streamUrl}`
+                            const message = `Watch the live stream: ${window.location.origin}/stream/${streamId || stream?.id}`
                             if (navigator.share) {
                               navigator.share({
                                 title: 'Live Stream',
                                 text: message,
-                                url: streamUrl
+                                url: `${window.location.origin}/stream/${streamId || stream?.id}`
                               }).catch(() => {
                                 // Fallback to SMS
                                 window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
@@ -1750,6 +2099,22 @@ function VideoRecorder() {
                 <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 pointer-events-none">
                   <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                   <span className="text-white text-sm font-semibold bg-black bg-opacity-70 px-2 py-1 rounded backdrop-blur-sm">REC</span>
+                  
+                  {/* Share button while recording */}
+                  {streamUrl && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigator.clipboard.writeText(streamUrl)
+                        setUrlCopied(true)
+                        setTimeout(() => setUrlCopied(false), 2000)
+                      }}
+                      className="pointer-events-auto flex items-center gap-2 px-3 py-1 bg-blue-600 bg-opacity-80 hover:bg-opacity-100 rounded text-white text-xs font-semibold backdrop-blur-sm transition-all"
+                    >
+                      {urlCopied ? <Check className="w-3 h-3" /> : <Share2 className="w-3 h-3" />}
+                      <span>{urlCopied ? 'Copied!' : 'Share Stream'}</span>
+                    </button>
+                  )}
                 </div>
               )}
 

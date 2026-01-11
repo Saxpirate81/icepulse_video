@@ -207,7 +207,7 @@ function SynchronizedVideoPlayer({ videos, game }) {
                   ref={(el) => {
                     if (el) videoRefs.current[video.id] = el
                   }}
-                  src={video.video_url}
+                  src={video.video_url?.replace(/\?tusv2=true/, '')}
                   className="w-full h-full object-contain"
                   playsInline
                   preload="metadata"

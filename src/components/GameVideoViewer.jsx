@@ -239,7 +239,7 @@ function GameVideoViewer() {
                       <div className="relative aspect-video bg-black">
                         {v.thumbnail_url ? (
                           <img
-                            src={v.thumbnail_url}
+                            src={v.thumbnail_url.replace(/\?tusv2=true/, '')}
                             alt="Video thumbnail"
                             className="absolute inset-0 w-full h-full object-cover"
                           />

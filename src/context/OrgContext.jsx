@@ -4,6 +4,7 @@ import { getAdminClient } from '../lib/supabase-admin'
 import { useAuth } from './AuthContext'
 import { USE_MOCK } from '../lib/supabase-mock'
 import { mockOrganization, mockOrganizations, mockResponses } from '../lib/mock-data'
+import * as tus from 'tus-js-client'
 
 const OrgContext = createContext(null)
 
@@ -14,6 +15,9 @@ export function OrgProvider({ children }) {
   const [selectedOrgId, setSelectedOrgId] = useState(null) // Currently selected organization
   const [isLoading, setIsLoading] = useState(true)
   const [databaseError, setDatabaseError] = useState(null) // Track database connection issues
+  
+  // KILL SWITCH: Disable legacy Supabase video features during migration to Cloudflare
+  const USE_CLOUDFLARE_PIVOT = true
 
   // Find all organizations where user is a member (owner OR player/coach/parent)
   const findUserOrganizations = async (userId) => {
@@ -1628,186 +1632,157 @@ export function OrgProvider({ children }) {
   }
 
   // ============================================
-  // VIDEO RECORDING MANAGEMENT
+  // CLOUDFLARE STREAM INTEGRATION (VOD & LIVE)
   // ============================================
 
-  // Upload video blob to Supabase Storage
+  // 1. Upload Video (VOD) - Replaces Supabase Storage with Cloudflare TUS
   const uploadVideoToStorage = async (videoBlob, gameId, userId) => {
-    if (!user?.id || !organization?.id || USE_MOCK) {
-      // In mock mode, return a mock URL
-      return `mock://video-${Date.now()}.webm`
+    // MOCK MODE
+    if (USE_MOCK) return `mock://video-${Date.now()}.webm`
+
+    if (!user?.id || !organization?.id) {
+      throw new Error('Missing user or organization ID')
     }
 
     try {
-      // Determine file extension based on blob type
-      const isWebM = videoBlob.type?.includes('webm')
-      const extension = isWebM ? 'webm' : 'mp4'
-      const contentType = isWebM ? 'video/webm' : 'video/mp4'
+      console.log('☁️ [Cloudflare] Requesting Direct Upload URL...')
       
-      // Generate a unique filename: {orgId}/{gameId}/{userId}/{timestamp}.webm
-      const timestamp = Date.now()
-      const filePath = `${organization.id}/${gameId}/${userId}/${timestamp}.${extension}`
+      // Keys from user input - DIRECT CLIENT MODE
+      const CF_ACCOUNT_ID = "8ddadc04f6a8c0fd32db2fae084995dc"
+      const CF_API_TOKEN = "ZgCaabkk8VGTVH6ZVuIJLgXEPbN2426yM-vtY-uT"
 
-      console.log('📤 Uploading to path:', filePath, 'type:', contentType)
-
-      // Upload to Supabase Storage bucket 'videos'
-      console.log('📤 Attempting upload to bucket "videos" with path:', filePath)
-      console.log('📤 Video blob size:', videoBlob.size, 'bytes, type:', videoBlob.type)
+      // Step A: Get upload URL directly from Client
+      // Note: "direct_upload" endpoint requires TUS headers OR just a standard POST with maxDurationSeconds
+      // Since we are using TUS client later, we should just let TUS client handle the creation if possible,
+      // OR use the correct endpoint. 
+      // Cloudflare TUS endpoint: https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/stream
+      // But for DIRECT upload (from browser), we need to request a token first usually.
+      // However, we are using API Token (which is risky in browser but working for now).
       
-      const { data, error } = await supabase.storage
-        .from('videos')
-        .upload(filePath, videoBlob, {
-          contentType: contentType,
-          cacheControl: '3600',
-          upsert: false
+      // OPTION: Let tus-js-client handle the creation entirely
+      console.log('☁️ [Cloudflare] Starting Direct TUS Upload...')
+      
+      return new Promise((resolve, reject) => {
+        const upload = new tus.Upload(videoBlob, {
+          endpoint: `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream`,
+          retryDelays: [0, 1000, 3000, 5000],
+          headers: {
+            'Authorization': `Bearer ${CF_API_TOKEN}`,
+          },
+          chunkSize: 50 * 1024 * 1024, // 50MB chunks
+          metadata: {
+            name: `Game ${gameId} - ${new Date().toISOString()}`,
+            filename: `game-${gameId}.webm`,
+            filetype: videoBlob.type,
+            // Custom metadata must be string values
+            meta_userId: userId,
+            meta_gameId: gameId,
+            meta_orgId: organization.id
+          },
+          onError: (error) => {
+            console.error('❌ [Cloudflare] Upload Failed:', error)
+            reject(error)
+          },
+          onProgress: (bytesUploaded, bytesTotal) => {
+            const percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(2)
+            console.log(`☁️ [Cloudflare] Uploading: ${percentage}%`)
+          },
+          onSuccess: () => {
+            console.log('✅ [Cloudflare] Upload Complete!')
+            console.log('☁️ [Cloudflare] Full Upload URL:', upload.url)
+            
+            // Cloudflare TUS returns the URL in upload.url
+            // It looks like: https://api.cloudflare.com/.../stream/<UID>?tusv2=true
+            const uploadUrl = upload.url
+            // Clean the UID - it might have query params like ?tusv2=true
+            const rawUid = uploadUrl.split('/').pop()
+            const uid = rawUid.split('?')[0]
+            
+            console.log('☁️ [Cloudflare] Uploaded UID (cleaned):', uid)
+            
+            const playbackUrl = `https://cloudflarestream.com/${uid}/manifest/video.m3u8`
+            const thumbnailUrl = `https://cloudflarestream.com/${uid}/thumbnails/thumbnail.jpg`
+            
+            resolve({
+              url: playbackUrl, 
+              cloudflareUid: uid,
+              thumbnailUrl: thumbnailUrl
+            })
+          }
         })
+        
+        upload.start()
+      })
 
-      if (error) {
-        console.error('❌ Storage upload error details:', {
-          message: error.message,
-          statusCode: error.statusCode,
-          error: error.error,
-          name: error.name
-        })
-        throw error
-      }
-
-      console.log('✅ Upload successful, data:', data)
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('videos')
-        .getPublicUrl(filePath)
-
-      console.log('✅ Video public URL:', urlData.publicUrl)
-      return urlData.publicUrl
     } catch (error) {
-      console.error('Error uploading video to storage:', error)
+      console.error('❌ [Cloudflare] Integration Error:', error)
       throw error
     }
   }
 
-  // Upload thumbnail image to Supabase Storage
+  // 2. Upload Thumbnail (Optional - Cloudflare auto-generates)
   const uploadThumbnailToStorage = async (thumbnailDataUrl, gameId, userId) => {
-    if (!user?.id || !organization?.id || USE_MOCK) {
-      // In mock mode, return the data URL as-is
-      return thumbnailDataUrl
-    }
-
-    try {
-      // Convert data URL to blob
-      const response = await fetch(thumbnailDataUrl)
-      const blob = await response.blob()
-
-      // Generate a unique filename: thumbnails/{orgId}/{gameId}/{userId}/{timestamp}.jpg
-      const timestamp = Date.now()
-      const filename = `${organization.id}/${gameId}/${userId}/${timestamp}.jpg`
-      const filePath = `thumbnails/${filename}`
-
-      // Upload to Supabase Storage bucket 'videos' (same bucket, different folder)
-      const { data, error } = await supabase.storage
-        .from('videos')
-        .upload(filePath, blob, {
-          contentType: 'image/jpeg',
-          cacheControl: '3600',
-          upsert: false
-        })
-
-      if (error) {
-        console.error('Error uploading thumbnail to storage:', error)
-        // Don't throw - thumbnail is optional, continue with data URL
-        return thumbnailDataUrl
-      }
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('videos')
-        .getPublicUrl(filePath)
-
-      return urlData.publicUrl
-    } catch (error) {
-      console.error('Error uploading thumbnail to storage:', error)
-      // Return original data URL as fallback
-      return thumbnailDataUrl
-    }
+    console.log('ℹ️ [Cloudflare] Thumbnail upload skipped (Cloudflare auto-generates)')
+    return null
   }
 
-  // Add a video recording
+  // 3. Add Video Recording Record (Cloudflare & Database)
   const addVideoRecording = async (recordingData) => {
-    console.log('💾 addVideoRecording called with:', {
-      hasUserId: !!user?.id,
-      userId: user?.id,
-      hasGameId: !!recordingData?.gameId,
-      gameId: recordingData?.gameId,
-      videoUrl: recordingData?.videoUrl?.substring(0, 50) + '...',
-      recordingType: recordingData?.recordingType,
-      description: recordingData?.description
-    })
+    console.log('💾 addVideoRecording (Cloudflare Mode):', recordingData)
+
+    // For Cloudflare, the 'videoUrl' passed in is likely the object returned from uploadVideoToStorage
+    let videoUrl = recordingData.videoUrl
+    let cloudflareUid = null
+    let thumbnailUrl = recordingData.thumbnailUrl
+
+    // If videoUrl is an object (from our new uploadVideoToStorage return), extract details
+    if (typeof videoUrl === 'object' && videoUrl !== null) {
+      cloudflareUid = videoUrl.cloudflareUid
+      thumbnailUrl = videoUrl.thumbnailUrl || thumbnailUrl
+      videoUrl = videoUrl.url // The HLS playback URL
+    }
 
     if (!user?.id || !recordingData.gameId) {
-      console.error('❌ Cannot add video recording - missing:', {
-        userId: user?.id || 'MISSING',
-        gameId: recordingData?.gameId || 'MISSING'
-      })
-      return null
+       console.error('❌ Cannot add video - missing ID')
+       return null
     }
 
     // MOCK MODE
-    if (USE_MOCK) {
-      console.log('🎭 Mock mode - returning mock video')
-      return {
-        id: `mock-video-${Date.now()}`,
-        ...recordingData
-      }
-    }
+    if (USE_MOCK) return { id: `mock-video-${Date.now()}`, ...recordingData }
 
     try {
-      // Resolve team/season from local organization cache or fetch from DB (needed for newly-created events)
+      // Resolve team/season info
       let game = organization?.games?.find(g => g.id === recordingData.gameId) || null
-      console.log('🔍 Looking for game:', recordingData.gameId, 'Found in cache:', !!game)
       
       if (!game) {
-        console.log('🔍 Game not in cache, fetching from database...')
-        const { data: gameRow, error: gameErr } = await supabase
+        const { data: gameRow } = await supabase
           .from('icepulse_games')
           .select('id, team_id, season_id')
           .eq('id', recordingData.gameId)
           .single()
-
-        if (gameErr || !gameRow) {
-          console.error('❌ Game not found for video recording:', gameErr)
-          return null
-        }
-        game = { id: gameRow.id, teamId: gameRow.team_id, seasonId: gameRow.season_id }
-        console.log('✅ Game fetched from DB:', game)
+        if (gameRow) game = { id: gameRow.id, teamId: gameRow.team_id, seasonId: gameRow.season_id }
       }
 
       const insertData = {
         game_id: recordingData.gameId,
         user_id: user.id,
-        team_id: game.teamId,
-        season_id: game.seasonId,
-        video_url: recordingData.videoUrl,
-        thumbnail_url: recordingData.thumbnailUrl || null,
-        duration_seconds: recordingData.durationSeconds || null,
-        file_size_bytes: recordingData.fileSizeBytes || null,
+        team_id: game?.teamId,
+        season_id: game?.seasonId,
+        video_url: videoUrl, // HLS URL
+        cloudflare_uid: cloudflareUid, // Store the UID!
+        cloudflare_status: 'ready',
+        thumbnail_url: thumbnailUrl,
+        duration_seconds: recordingData.durationSeconds,
+        file_size_bytes: recordingData.fileSizeBytes,
         recording_start_timestamp: recordingData.recordingStartTimestamp,
-        recording_end_timestamp: recordingData.recordingEndTimestamp || null,
-        game_start_timestamp: recordingData.gameStartTimestamp || null,
+        recording_end_timestamp: recordingData.recordingEndTimestamp,
+        game_start_timestamp: recordingData.gameStartTimestamp,
         recording_type: recordingData.recordingType || 'full_game',
-        description: recordingData.description || null,
+        description: recordingData.description,
         upload_status: 'completed'
       }
 
-      console.log('📝 Inserting video recording to database:', {
-        game_id: insertData.game_id,
-        user_id: insertData.user_id,
-        team_id: insertData.team_id,
-        season_id: insertData.season_id,
-        video_url: insertData.video_url?.substring(0, 50) + '...',
-        recording_type: insertData.recording_type,
-        description: insertData.description
-      })
+      console.log('📝 Saving video metadata to DB...')
 
       const { data, error } = await supabase
         .from('icepulse_video_recordings')
@@ -1815,204 +1790,267 @@ export function OrgProvider({ children }) {
         .select()
         .single()
 
-      if (error) {
-        console.error('❌ Error adding video recording to database:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-          fullError: error
-        })
-        return null
-      }
+      if (error) throw error
+      
+      console.log('✅ Video saved:', data.id)
+      return { id: data.id, ...data }
 
-      console.log('✅ Video recording saved to database:', {
-        id: data.id,
-        game_id: data.game_id,
-        video_url: data.video_url?.substring(0, 50) + '...'
-      })
-
-      return {
-        id: data.id,
-        gameId: data.game_id,
-        userId: data.user_id,
-        videoUrl: data.video_url,
-        recordingStartTimestamp: data.recording_start_timestamp
-      }
     } catch (error) {
-      console.error('❌ Exception in addVideoRecording:', error)
+      console.error('❌ Error adding video recording:', error)
       return null
     }
   }
 
-  // Create a new stream
+  // 4. Create Stream (Live) - Cloudflare Live Input
   const createStream = async (gameId) => {
-    if (!user?.id || !organization?.id || USE_MOCK) {
-      // Generate a mock stream ID
-      const mockId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      return { id: mockId, streamUrl: `${window.location.origin}/stream/${mockId}` }
-    }
+    if (USE_MOCK) return { id: 'mock-stream', streamUrl: '#' }
 
     try {
-      // Generate a unique stream ID
-      const streamId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      
-      const { data, error } = await supabase
+      // FIRST: Check if there's already an active stream for this game
+      const { data: existingStream } = await supabase
         .from('icepulse_streams')
-        .insert({
-          id: streamId,
-          game_id: gameId,
-          created_by: user.id,
-          is_active: true
-        })
-        .select()
-        .single()
+        .select('*')
+        .eq('game_id', gameId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
-      if (error) throw error
-
-      const streamUrl = `${window.location.origin}/stream/${streamId}`
-      return { id: streamId, streamUrl, data }
-    } catch (error) {
-      console.error('Error creating stream:', error)
-      throw error
-    }
-  }
-
-  // Upload a stream chunk
-  const uploadStreamChunk = async (videoBlob, streamId, chunkIndex) => {
-    if (!user?.id || !organization?.id || USE_MOCK) {
-      return { chunkUrl: `mock://chunk-${chunkIndex}.webm` }
-    }
-
-    try {
-      // Validate blob before upload
-      if (!videoBlob || videoBlob.size === 0) {
-        throw new Error('Invalid video blob - empty or null')
-      }
-
-      // Upload chunk to storage
-      const fileName = `streams/${streamId}/chunk-${chunkIndex}-${Date.now()}.webm`
-      console.log(`📤 Uploading chunk ${chunkIndex} (${Math.round(videoBlob.size / 1024)}KB)...`)
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('videos')
-        .upload(fileName, videoBlob, {
-          contentType: 'video/webm',
-          cacheControl: '3600',
-          upsert: false
-        })
-
-      if (uploadError) {
-        console.error(`❌ Upload failed for chunk ${chunkIndex}:`, uploadError)
-        throw uploadError
-      }
-
-      console.log(`✅ Upload complete for chunk ${chunkIndex}`)
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('videos')
-        .getPublicUrl(fileName)
-
-      // Small delay to ensure file is processed by Supabase
-      await new Promise(resolve => setTimeout(resolve, 500))
-
-      // Verify file is accessible (HEAD request)
-      try {
-        const response = await fetch(urlData.publicUrl, { method: 'HEAD' })
-        if (!response.ok && response.status !== 200) {
-          console.warn(`⚠️ Chunk ${chunkIndex} not immediately accessible (${response.status}), but continuing...`)
-        } else {
-          console.log(`✅ Chunk ${chunkIndex} verified accessible`)
+      if (existingStream) {
+        console.log('🔄 [Cloudflare] Reusing existing active stream:', existingStream.id)
+        return {
+          id: existingStream.id,
+          liveInputId: existingStream.cloudflare_live_input_id,
+          streamUrl: existingStream.cloudflare_playback_url,
+          whipUrl: existingStream.cloudflare_whip_url,
+          rtmpsUrl: existingStream.rtmps_url || '',
+          rtmpsKey: existingStream.cloudflare_stream_key || ''
         }
-      } catch (verifyErr) {
-        console.warn(`⚠️ Could not verify chunk ${chunkIndex} accessibility:`, verifyErr)
-        // Continue anyway - might be a CORS issue but file could still work
       }
 
-      // Save chunk metadata
-      const { error: chunkError } = await supabase
-        .from('icepulse_stream_chunks')
-        .insert({
-          stream_id: streamId,
-          chunk_index: chunkIndex,
-          video_url: fileName,
-          file_size_bytes: videoBlob.size
-        })
+      console.log('☁️ [Cloudflare] Creating Live Input...')
 
-      if (chunkError) {
-        console.error(`❌ Database insert failed for chunk ${chunkIndex}:`, chunkError)
-        throw chunkError
+      // Direct API (client-side) only to avoid CORS noise from the edge function path
+      let liveInputId, rtmpsKey, rtmpsUrl, whipUrl, playbackUrl
+
+      const CF_ACCOUNT_ID = "8ddadc04f6a8c0fd32db2fae084995dc"
+      const CF_API_TOKEN = "ZgCaabkk8VGTVH6ZVuIJLgXEPbN2426yM-vtY-uT"
+
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream/live_inputs`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${CF_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            meta: {
+              name: `Live Stream - ${new Date().toISOString()}`,
+              userId: user.id
+            },
+            recording: { mode: 'automatic' } // Auto-record to VOD
+          }),
+        }
+      )
+
+      const data = await response.json()
+
+      if (!data.success) {
+        throw new Error(`Cloudflare Error: ${JSON.stringify(data.errors)}`)
       }
 
-      console.log(`✅ Chunk ${chunkIndex} saved to database`)
-      return { chunkUrl: urlData.publicUrl, fileName }
+      const result = data.result
+      console.log('☁️ [Cloudflare] Live Input Created (direct):', result)
+      
+      liveInputId = result.uid
+      rtmpsKey = result.rtmps?.streamKey || ''
+      rtmpsUrl = result.rtmps?.url || ''
+      whipUrl = result.webRTC?.url || ''
+      playbackUrl =
+        result.webRTC?.playback?.url ||
+        result.hlsPlayback?.url ||
+        null
+
+      // If missing, fetch details for this live input to get playback URLs (poll a few times to allow propagation)
+      const fetchPlaybackWithRetries = async () => {
+        const maxAttempts = 5
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const detailRes = await fetch(
+              `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream/live_inputs/${liveInputId}`,
+              {
+                method: 'GET',
+                headers: {
+                  'Authorization': `Bearer ${CF_API_TOKEN}`,
+                  'Content-Type': 'application/json',
+                },
+              }
+            )
+            const detailData = await detailRes.json()
+            if (detailData?.success) {
+              const det = detailData.result || {}
+              const candidate =
+                det.webRTC?.playback?.url ||
+                det.hlsPlayback?.url ||
+                null
+              if (candidate && /^https?:\/\//i.test(candidate)) {
+                return candidate
+              }
+            } else {
+              console.warn(`⚠️ Attempt ${attempt} could not fetch playback URL:`, detailData?.errors)
+            }
+          } catch (e) {
+            console.warn(`⚠️ Attempt ${attempt} live input detail fetch failed:`, e)
+          }
+          await new Promise(r => setTimeout(r, 2000))
+        }
+        return null
+      }
+
+      if (!playbackUrl || !/^https?:\/\//i.test(playbackUrl)) {
+        const polledUrl = await fetchPlaybackWithRetries()
+        if (polledUrl) {
+          playbackUrl = polledUrl
+          console.log('✅ Playback URL obtained after polling:', playbackUrl)
+        }
+      }
+
+      // Fallback: derive playback URL from customer domain in WHIP URL if still missing
+      if ((!playbackUrl || !/^https?:\/\//i.test(playbackUrl)) && whipUrl) {
+        try {
+          const whip = new URL(whipUrl)
+          const host = whip.host
+          const fallbackBase = `https://${host}/${liveInputId}/manifest/video.m3u8`
+          playbackUrl = fallbackBase
+          console.warn('⚠️ Playback URL missing from API; using derived customer playback URL:', playbackUrl)
+        } catch (e) {
+          console.warn('⚠️ Could not derive playback URL from WHIP URL:', e)
+        }
+      }
+
+      // Ultimate fallback: generic cloudflarestream.com domain
+      if (!playbackUrl || !/^https?:\/\//i.test(playbackUrl)) {
+        playbackUrl = `https://cloudflarestream.com/${liveInputId}/manifest/video.m3u8`
+        console.warn('⚠️ Using generic playback URL fallback:', playbackUrl)
+      }
+
+      if (!whipUrl) {
+         console.error('❌ Cloudflare did not return a WHIP URL. WebRTC broadcasting requires this.', result)
+      }
+
+      // Store in icepulse_streams for reference
+      // Use maybeSingle() or select() without single() to avoid errors if RLS blocks read-back immediately
+      
+      // Generate UUIDv4 for ID (robust polyfill)
+      const generateUUID = () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      };
+      
+      // Build final record
+      const streamId = generateUUID()
+      const streamRecordToInsert = {
+        id: streamId,
+        game_id: gameId,
+        created_by: user.id,
+        is_active: true,
+        cloudflare_live_input_id: liveInputId,
+        cloudflare_stream_key: rtmpsKey,
+        cloudflare_playback_url: playbackUrl,
+        cloudflare_whip_url: whipUrl
+      }
+      console.log('📝 [DATABASE] Inserting stream record:', JSON.stringify(streamRecordToInsert, null, 2))
+
+       const { data: streamRecord, error: dbError } = await supabase
+        .from('icepulse_streams')
+        .insert(streamRecordToInsert)
+        .select()
+        .maybeSingle()
+
+      if (dbError) {
+        console.error('❌ Could not save stream to DB:', dbError)
+        // Try one more time with a simple insert (no select) in case RLS blocks select
+        if (dbError.code === '42501' || dbError.message?.includes('violates row-level security')) {
+           console.log('🔄 Retrying insert without select...')
+           const { error: retryError } = await supabase
+            .from('icepulse_streams')
+            .insert({
+              id: streamId,
+              game_id: gameId,
+              created_by: user.id,
+              is_active: true,
+              cloudflare_live_input_id: liveInputId,
+              cloudflare_stream_key: rtmpsKey,
+              cloudflare_playback_url: playbackUrl,
+              cloudflare_whip_url: whipUrl
+            })
+            
+           if (retryError) console.error('❌ Retry failed:', retryError)
+           else console.log('✅ Retry insert successful (blind insert)')
+        }
+      } else {
+        console.log('✅ Stream saved to DB:', streamRecord?.id || streamId)
+      }
+
+      return {
+        id: streamId,           // Use the database UUID for app-level tracking
+        liveInputId: liveInputId,
+        streamUrl: playbackUrl, // For viewers
+        whipUrl: whipUrl,       // For broadcaster
+        rtmpsUrl: rtmpsUrl,
+        rtmpsKey: rtmpsKey
+      }
     } catch (error) {
-      console.error(`❌ Error uploading stream chunk ${chunkIndex}:`, error)
+      console.error('❌ [Cloudflare] Stream Creation Error:', error)
       throw error
     }
   }
 
-  // Stop/deactivate a stream
-  const stopStream = async (streamId) => {
-    if (!user?.id || USE_MOCK) return
+  // 5. Queue Upload (Legacy) -> DISABLED
+  const queueStreamChunkUpload = () => {
+    console.warn('🛑 Legacy chunk upload disabled (Switched to Cloudflare)')
+  }
 
+  // 6. Upload Chunk (Legacy) -> DISABLED
+  const uploadStreamChunk = async () => {
+    console.warn('🛑 Legacy chunk upload disabled (Switched to Cloudflare)')
+    return null
+  }
+
+  // 7. Stop Stream
+  const stopStream = async (streamId) => {
+    if (!streamId) return
+    
+    console.log('ℹ️ [Cloudflare] Stopping stream:', streamId)
     try {
+      // Update database status
       const { error } = await supabase
         .from('icepulse_streams')
         .update({ is_active: false })
         .eq('id', streamId)
-        .eq('created_by', user.id)
-
-      if (error) throw error
-    } catch (error) {
-      console.error('Error stopping stream:', error)
-      throw error
+      
+      if (error) console.warn('⚠️ Could not update stream status in DB:', error)
+      else console.log('✅ Stream marked inactive in DB')
+    } catch (e) {
+      console.warn('⚠️ Error stopping stream:', e)
     }
   }
 
-  // Reactivate an existing stream (for restarting recording)
-  const reactivateStream = async (streamId) => {
-    if (!user?.id || !streamId || USE_MOCK) return { id: streamId, streamUrl: `${window.location.origin}/stream/${streamId}`, nextChunkIndex: 0 }
-
-    try {
-      // Reactivate the stream
-      const { data, error } = await supabase
-        .from('icepulse_streams')
-        .update({ is_active: true })
-        .eq('id', streamId)
-        .eq('created_by', user.id)
-        .select()
-        .single()
-
-      if (error) throw error
-
-      // Find the max chunk index to continue from there
-      let nextChunkIndex = 0
-      try {
-        const { data: chunks, error: chunksError } = await supabase
-          .from('icepulse_stream_chunks')
-          .select('chunk_index')
-          .eq('stream_id', streamId)
-          .order('chunk_index', { ascending: false })
-          .limit(1)
-
-        if (!chunksError && chunks && chunks.length > 0) {
-          nextChunkIndex = (chunks[0].chunk_index || 0) + 1
-          console.log(`📊 Found existing chunks, continuing from index ${nextChunkIndex}`)
-        }
-      } catch (chunksErr) {
-        console.warn('Could not query existing chunks, starting from 0:', chunksErr)
-        // Continue with 0 if we can't query
-      }
-
-      const streamUrl = `${window.location.origin}/stream/${streamId}`
-      return { id: streamId, streamUrl, data, nextChunkIndex }
-    } catch (error) {
-      console.error('Error reactivating stream:', error)
-      throw error
-    }
+  const reactivateStream = async () => {
+    console.warn('ℹ️ [Cloudflare] Reactivate not needed (Just start new session)')
+    return null
   }
+
+  // ============================================
+  // UPLOAD QUEUE MANAGEMENT (Legacy - Removed)
+  // ============================================
+  // (Empty placeholders to prevent reference errors if used elsewhere)
+  const [uploadQueue, setUploadQueue] = useState([])
+  const [isUploading, setIsUploading] = useState(false)
 
   // Get all videos for a game
   const getGameVideos = async (gameId) => {
@@ -2367,7 +2405,8 @@ export function OrgProvider({ children }) {
     uploadVideoToStorage,
     uploadThumbnailToStorage,
     createStream,
-    uploadStreamChunk,
+    uploadStreamChunk, // Keep exposed for direct calls if needed
+    queueStreamChunkUpload, // Expose queue function
     stopStream,
     reactivateStream,
     isLoading,
