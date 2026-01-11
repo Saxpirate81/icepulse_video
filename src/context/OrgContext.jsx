@@ -4,7 +4,6 @@ import { getAdminClient } from '../lib/supabase-admin'
 import { useAuth } from './AuthContext'
 import { USE_MOCK } from '../lib/supabase-mock'
 import { mockOrganization, mockOrganizations, mockResponses } from '../lib/mock-data'
-import * as tus from 'tus-js-client'
 
 const OrgContext = createContext(null)
 
@@ -1661,6 +1660,9 @@ export function OrgProvider({ children }) {
       
       // OPTION: Let tus-js-client handle the creation entirely
       console.log('☁️ [Cloudflare] Starting Direct TUS Upload...')
+      
+      // Dynamically import tus-js-client to avoid build-time resolution issues
+      const tus = await import('tus-js-client')
       
       return new Promise((resolve, reject) => {
         const upload = new tus.Upload(videoBlob, {
