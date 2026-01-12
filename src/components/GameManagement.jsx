@@ -384,6 +384,23 @@ function GameManagement() {
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2 flex-wrap">
+                              {/* Event Type Logo/Icon */}
+                              <div className={`flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0 ${
+                                game.eventType === 'game' 
+                                  ? 'bg-blue-900 bg-opacity-30'
+                                  : game.eventType === 'practice'
+                                  ? 'bg-purple-900 bg-opacity-30'
+                                  : 'bg-emerald-900 bg-opacity-30'
+                              }`}>
+                                {game.eventType === 'game' ? (
+                                  <Calendar className="w-6 h-6 text-blue-400" />
+                                ) : game.eventType === 'practice' ? (
+                                  <Dumbbell className="w-6 h-6 text-purple-400" />
+                                ) : (
+                                  <Sparkles className="w-6 h-6 text-emerald-400" />
+                                )}
+                              </div>
+                              
                               <div className="flex items-center gap-2">
                                 <Clock className="w-4 h-4 text-gray-400" />
                                 <span className="text-white font-medium">
