@@ -162,11 +162,12 @@ function GameManagement() {
       </div>
 
       {/* Games List */}
-      {organization?.games?.length === 0 ? (
-        <p className="text-gray-400 text-center py-8">No games scheduled yet</p>
-      ) : (
-        <div className="space-y-6">
-          {sortedDates.map(date => (
+      <div className="max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-320px)] overflow-y-auto scrollable-container">
+        {organization?.games?.length === 0 ? (
+          <p className="text-gray-400 text-center py-8">No games scheduled yet</p>
+        ) : (
+          <div className="space-y-6 pr-2">
+            {sortedDates.map(date => (
             <div key={date} className="bg-gray-700 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-3 text-blue-400">
                 {formatDate(date)}
@@ -244,8 +245,9 @@ function GameManagement() {
               </div>
             </div>
           ))}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {/* Add/Edit Modal */}
       {showAddModal && (

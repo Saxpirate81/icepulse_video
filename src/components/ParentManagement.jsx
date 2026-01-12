@@ -160,11 +160,12 @@ function ParentManagement() {
       </div>
 
       {/* Parents List */}
-      <div className="space-y-3">
-        {organization?.parents?.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No parents added yet</p>
-        ) : (
-          organization?.parents?.map((parent) => {
+      <div className="max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-320px)] overflow-y-auto scrollable-container">
+        <div className="space-y-3 pr-2">
+          {organization?.parents?.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No parents added yet</p>
+          ) : (
+            organization?.parents?.map((parent) => {
             const connectedPlayers = organization.players?.filter(p => 
               parent.playerConnections?.includes(p.id)
             ) || []
@@ -211,6 +212,7 @@ function ParentManagement() {
             )
           })
         )}
+        </div>
       </div>
 
       {/* Add/Edit Modal */}

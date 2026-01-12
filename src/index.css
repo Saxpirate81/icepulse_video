@@ -13,6 +13,27 @@ body {
   overflow-x: hidden;
 }
 
+/* Hidden scrollbar utility classes */
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Scrollable container with hidden scrollbar */
+.scrollable-container {
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.scrollable-container::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
 /* Fullscreen container styling */
 div:fullscreen {
   background-color: black;

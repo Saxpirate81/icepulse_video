@@ -174,11 +174,12 @@ function CoachManagement() {
       </div>
 
       {/* Coaches List */}
-      <div className="space-y-3">
-        {organization?.coaches?.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No coaches added yet</p>
-        ) : (
-          organization?.coaches?.map((coach) => {
+      <div className="max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-320px)] overflow-y-auto scrollable-container">
+        <div className="space-y-3 pr-2">
+          {organization?.coaches?.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No coaches added yet</p>
+          ) : (
+            organization?.coaches?.map((coach) => {
             const assignedTeam = organization.teams?.find(t => t.id === coach.teamId)
             return (
               <div
@@ -224,6 +225,7 @@ function CoachManagement() {
             )
           })
         )}
+        </div>
       </div>
 
       {/* Add/Edit Modal */}

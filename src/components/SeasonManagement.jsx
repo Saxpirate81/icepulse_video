@@ -65,11 +65,12 @@ function SeasonManagement() {
       </div>
 
       {/* Seasons List */}
-      <div className="space-y-3">
-        {organization?.seasons?.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No seasons/tournaments added yet</p>
-        ) : (
-          organization?.seasons?.map((season) => (
+      <div className="max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-320px)] overflow-y-auto scrollable-container">
+        <div className="space-y-3 pr-2">
+          {organization?.seasons?.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No seasons/tournaments added yet</p>
+          ) : (
+            organization?.seasons?.map((season) => (
             <div
               key={season.id}
               className="bg-gray-700 rounded-lg p-4 hover:bg-gray-600 transition-colors cursor-pointer"
@@ -82,6 +83,7 @@ function SeasonManagement() {
             </div>
           ))
         )}
+        </div>
       </div>
 
       {/* Add/Edit Modal */}

@@ -75,8 +75,9 @@ function OrganizationalDashboard() {
   }))
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen bg-gray-900 text-white flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 p-4 sm:p-6 lg:p-8 pb-0">
+        <div className="max-w-7xl mx-auto">
         {/* Database Error Banner */}
         {databaseError && (
           <div className="mb-4 bg-yellow-900 bg-opacity-30 border border-yellow-700 rounded-lg p-4 flex items-center justify-between">
@@ -93,17 +94,17 @@ function OrganizationalDashboard() {
           </div>
         )}
         
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
+        <div className="mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Organizational Dashboard</h1>
-              <p className="text-gray-400">Manage your organization, teams, and members</p>
+              <h1 className="text-2xl sm:text-3xl font-bold mb-2">Organizational Dashboard</h1>
+              <p className="text-sm sm:text-base text-gray-400">Manage your organization, teams, and members</p>
             </div>
             {/* Organization Switcher - only show if user is part of multiple orgs */}
             {organizations && organizations.length > 1 && (
               <div className="flex items-center gap-3">
-                <span className="text-gray-400 text-sm">Organization:</span>
-                <div className="w-64">
+                <span className="text-gray-400 text-sm whitespace-nowrap">Organization:</span>
+                <div className="w-full sm:w-64">
                   <Dropdown
                     options={orgOptions}
                     value={selectedOrgId || organization?.id || ''}
@@ -133,8 +134,8 @@ function OrganizationalDashboard() {
 
         {/* Tabs */}
         {tabs.length > 0 && (
-          <div className="border-b border-gray-700 mb-6">
-            <div className="overflow-x-auto -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 scroll-smooth" style={{ scrollbarWidth: 'thin', scrollbarColor: '#4b5563 #1f2937' }}>
+          <div className="border-b border-gray-700 mb-0 flex-shrink-0">
+            <div className="overflow-x-auto -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 scroll-smooth hide-scrollbar">
               <div className="flex gap-2 min-w-max pb-1">
                 {tabs.map((tab) => {
                   const Icon = tab.icon
@@ -160,22 +161,30 @@ function OrganizationalDashboard() {
 
         {/* Tab Content */}
         {tabs.length > 0 && (
-          <div>
-            {activeTab === 'setup' && tabs.find(t => t.id === 'setup') && <OrgSetup />}
-            {activeTab === 'teams' && tabs.find(t => t.id === 'teams') && <TeamManagement />}
-            {activeTab === 'seasons' && tabs.find(t => t.id === 'seasons') && <SeasonManagement />}
-            {activeTab === 'schedule' && tabs.find(t => t.id === 'schedule') && <GameManagement />}
-            {activeTab === 'recorder' && tabs.find(t => t.id === 'recorder') && <VideoRecorder />}
-            {activeTab === 'videos' && tabs.find(t => t.id === 'videos') && <GameVideoViewer />}
-            {activeTab === 'coaches' && tabs.find(t => t.id === 'coaches') && <CoachManagement />}
-            {activeTab === 'players' && tabs.find(t => t.id === 'players') && <PlayerManagement />}
-            {activeTab === 'parents' && tabs.find(t => t.id === 'parents') && <ParentManagement />}
+          <div className="flex-1 overflow-hidden">
+            <div className="h-full overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8 pt-4">
+              <div className="max-w-7xl mx-auto">
+                {activeTab === 'setup' && tabs.find(t => t.id === 'setup') && <OrgSetup />}
+                {activeTab === 'teams' && tabs.find(t => t.id === 'teams') && <TeamManagement />}
+                {activeTab === 'seasons' && tabs.find(t => t.id === 'seasons') && <SeasonManagement />}
+                {activeTab === 'schedule' && tabs.find(t => t.id === 'schedule') && <GameManagement />}
+                {activeTab === 'recorder' && tabs.find(t => t.id === 'recorder') && <VideoRecorder />}
+                {activeTab === 'videos' && tabs.find(t => t.id === 'videos') && <GameVideoViewer />}
+                {activeTab === 'coaches' && tabs.find(t => t.id === 'coaches') && <CoachManagement />}
+                {activeTab === 'players' && tabs.find(t => t.id === 'players') && <PlayerManagement />}
+                {activeTab === 'parents' && tabs.find(t => t.id === 'parents') && <ParentManagement />}
+              </div>
+            </div>
           </div>
         )}
 
         {tabs.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-400">No permissions available. Please contact your administrator.</p>
+          <div className="flex-1 overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8">
+            <div className="max-w-7xl mx-auto">
+              <div className="text-center py-12">
+                <p className="text-gray-400">No permissions available. Please contact your administrator.</p>
+              </div>
+            </div>
           </div>
         )}
       </div>

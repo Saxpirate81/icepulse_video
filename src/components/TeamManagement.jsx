@@ -60,11 +60,12 @@ function TeamManagement() {
       </div>
 
       {/* Teams List */}
-      <div className="space-y-3">
-        {organization?.teams?.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No teams added yet</p>
-        ) : (
-          organization?.teams?.map((team) => (
+      <div className="max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-320px)] overflow-y-auto scrollable-container">
+        <div className="space-y-3 pr-2">
+          {organization?.teams?.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No teams added yet</p>
+          ) : (
+            organization?.teams?.map((team) => (
             <div
               key={team.id}
               className="bg-gray-700 rounded-lg p-4 hover:bg-gray-600 transition-colors cursor-pointer"
@@ -74,6 +75,7 @@ function TeamManagement() {
             </div>
           ))
         )}
+        </div>
       </div>
 
       {/* Add/Edit Modal */}
