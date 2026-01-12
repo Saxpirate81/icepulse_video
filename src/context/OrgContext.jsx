@@ -1574,7 +1574,7 @@ export function OrgProvider({ children }) {
           season_id: game.seasonId,
           game_date: game.gameDate,
           game_time: game.gameTime,
-          opponent: game.opponent,
+          opponent: game.opponent || null,
           location: game.location || null,
           notes: game.notes || null,
           event_type: game.eventType || 'game',
