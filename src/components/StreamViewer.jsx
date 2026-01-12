@@ -473,7 +473,25 @@ function StreamViewer({ streamId, isPreview = false }) {
       // Check for native HLS support (Safari)
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = readyUrl
-        video.play().catch(e => console.warn('Autoplay failed:', e))
+        video.addEventListener('loadedmetadata', () => {
+          console.log('✅ HLS Metadata loaded, playing...')
+          setIsLive(true)
+          setError(null)
+        })
+        video.addEventListener('playing', () => {
+          console.log('✅ HLS Video playing')
+          setIsLive(true)
+          setError(null)
+        })
+        video.addEventListener('error', (e) => {
+          console.error('❌ HLS Video error:', e)
+          setError('Failed to play video stream. Please try refreshing the page.')
+        })
+        video.play().catch(e => {
+          console.warn('Autoplay failed:', e)
+          // Still set as live if video loaded, user can click play
+          setIsLive(true)
+        })
       }
       // Check for HLS.js support (Chrome, Firefox, etc.)
       else if (Hls.isSupported()) {
@@ -493,7 +511,15 @@ function StreamViewer({ streamId, isPreview = false }) {
         
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           console.log('✅ HLS Manifest Parsed, playing...')
+          setIsLive(true)
+          setError(null)
           video.play().catch(e => console.warn('Autoplay failed:', e))
+        })
+
+        video.addEventListener('playing', () => {
+          console.log('✅ HLS Video playing')
+          setIsLive(true)
+          setError(null)
         })
 
         hls.on(Hls.Events.ERROR, (event, data) => {
@@ -509,6 +535,7 @@ function StreamViewer({ streamId, isPreview = false }) {
                 break
               default:
                 console.error('HLS Fatal error:', data)
+                setError('Failed to load video stream. Please try refreshing the page.')
                 hls.destroy()
                 break
             }
