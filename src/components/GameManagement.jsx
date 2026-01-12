@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useOrg } from '../context/OrgContext'
 import { Calendar, Plus, Trash2, X, Clock, Users, Trophy, Edit2 } from 'lucide-react'
 import Dropdown from './Dropdown'
+import LocationSearch from './LocationSearch'
 
 function GameManagement() {
   const { organization, addGame, updateGame, deleteGame } = useOrg()
