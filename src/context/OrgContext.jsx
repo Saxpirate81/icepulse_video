@@ -1662,9 +1662,6 @@ export function OrgProvider({ children }) {
       // OPTION: Let tus-js-client handle the creation entirely
       console.log('☁️ [Cloudflare] Starting Direct TUS Upload...')
       
-      // Dynamically import tus-js-client to avoid build-time resolution issues
-      const tus = await import('tus-js-client')
-      
       return new Promise((resolve, reject) => {
         const upload = new tus.Upload(videoBlob, {
           endpoint: `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream`,
@@ -1805,7 +1802,7 @@ export function OrgProvider({ children }) {
   }
 
   // 4. Create Stream (Live) - Cloudflare Live Input
-  const createStream = async (gameId) => {
+  const createStream = async (gameId, resumeStreamId = null) => {
     if (USE_MOCK) return { id: 'mock-stream', streamUrl: '#' }
 
     try {
@@ -1828,6 +1825,76 @@ export function OrgProvider({ children }) {
           whipUrl: existingStream.cloudflare_whip_url,
           rtmpsUrl: existingStream.rtmps_url || '',
           rtmpsKey: existingStream.cloudflare_stream_key || ''
+        }
+      }
+
+      // SECOND: If resuming a specific stream, reactivate it
+      if (resumeStreamId) {
+        const { data: stoppedStream } = await supabase
+          .from('icepulse_streams')
+          .select('*')
+          .eq('id', resumeStreamId)
+          .eq('game_id', gameId)
+          .eq('is_active', false)
+          .single()
+
+        if (stoppedStream) {
+          // Check if it was stopped recently (within 5 minutes)
+          const stoppedAt = new Date(stoppedStream.updated_at)
+          const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+          
+          if (stoppedAt > fiveMinutesAgo) {
+            // Reactivate the stream
+            const { error: updateError } = await supabase
+              .from('icepulse_streams')
+              .update({ is_active: true })
+              .eq('id', resumeStreamId)
+
+            if (!updateError) {
+              console.log('✅ [Cloudflare] Resumed stream:', resumeStreamId)
+              return {
+                id: stoppedStream.id,
+                liveInputId: stoppedStream.cloudflare_live_input_id,
+                streamUrl: stoppedStream.cloudflare_playback_url,
+                whipUrl: stoppedStream.cloudflare_whip_url,
+                rtmpsUrl: stoppedStream.rtmps_url || '',
+                rtmpsKey: stoppedStream.cloudflare_stream_key || ''
+              }
+            }
+          }
+        }
+      }
+
+      // THIRD: Check for any recently stopped stream for this game (within 5 minutes)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      const { data: recentlyStoppedStream } = await supabase
+        .from('icepulse_streams')
+        .select('*')
+        .eq('game_id', gameId)
+        .eq('is_active', false)
+        .eq('created_by', user.id) // Only resume streams created by the same user
+        .gte('updated_at', fiveMinutesAgo)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (recentlyStoppedStream) {
+        // Reactivate the recently stopped stream
+        const { error: updateError } = await supabase
+          .from('icepulse_streams')
+          .update({ is_active: true })
+          .eq('id', recentlyStoppedStream.id)
+
+        if (!updateError) {
+          console.log('✅ [Cloudflare] Resumed recently stopped stream:', recentlyStoppedStream.id)
+          return {
+            id: recentlyStoppedStream.id,
+            liveInputId: recentlyStoppedStream.cloudflare_live_input_id,
+            streamUrl: recentlyStoppedStream.cloudflare_playback_url,
+            whipUrl: recentlyStoppedStream.cloudflare_whip_url,
+            rtmpsUrl: recentlyStoppedStream.rtmps_url || '',
+            rtmpsKey: recentlyStoppedStream.cloudflare_stream_key || ''
+          }
         }
       }
 
@@ -2046,6 +2113,30 @@ export function OrgProvider({ children }) {
   const reactivateStream = async () => {
     console.warn('ℹ️ [Cloudflare] Reactivate not needed (Just start new session)')
     return null
+  }
+
+  // Get recently stopped streams for a game (within 5 minutes) for resume option
+  const getRecentlyStoppedStream = async (gameId) => {
+    if (!gameId || !user) return null
+
+    try {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      const { data: stoppedStream } = await supabase
+        .from('icepulse_streams')
+        .select('*')
+        .eq('game_id', gameId)
+        .eq('is_active', false)
+        .eq('created_by', user.id)
+        .gte('updated_at', fiveMinutesAgo)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      return stoppedStream || null
+    } catch (error) {
+      console.error('Error getting recently stopped stream:', error)
+      return null
+    }
   }
 
   // ============================================
@@ -2412,6 +2503,7 @@ export function OrgProvider({ children }) {
     queueStreamChunkUpload, // Expose queue function
     stopStream,
     reactivateStream,
+    getRecentlyStoppedStream,
     isLoading,
     databaseError,
     clearDatabaseError: () => setDatabaseError(null),

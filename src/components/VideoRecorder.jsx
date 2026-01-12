@@ -29,6 +29,7 @@ function VideoRecorder() {
   const queueStreamChunkUpload = orgContext?.queueStreamChunkUpload || null // Get queue function
   const stopStream = orgContext?.stopStream || null
   const reactivateStream = orgContext?.reactivateStream || null
+  const getRecentlyStoppedStream = orgContext?.getRecentlyStoppedStream || null
   
   // For players: get teams/seasons from their assignments
   const [playerTeams, setPlayerTeams] = useState([])
@@ -373,6 +374,7 @@ function VideoRecorder() {
   const [streamId, setStreamId] = useState(null)
   const [streamUrl, setStreamUrl] = useState(null)
   const [urlCopied, setUrlCopied] = useState(false)
+  const [recentlyStoppedStream, setRecentlyStoppedStream] = useState(null)
   const streamChunkIndexRef = useRef(0)
   const streamChunkIntervalRef = useRef(null)
   const streamChunksRef = useRef([]) // Store chunks for streaming
@@ -634,6 +636,32 @@ function VideoRecorder() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Check for recently stopped streams when game is selected
+  useEffect(() => {
+    const checkRecentlyStoppedStream = async () => {
+      if (!selectedGameId || !getRecentlyStoppedStream || isRecording) {
+        setRecentlyStoppedStream(null)
+        return
+      }
+
+      try {
+        const stoppedStream = await getRecentlyStoppedStream(selectedGameId)
+        setRecentlyStoppedStream(stoppedStream)
+        if (stoppedStream) {
+          console.log('📹 Found recently stopped stream that can be resumed:', stoppedStream.id)
+        }
+      } catch (error) {
+        console.error('Error checking for recently stopped stream:', error)
+        setRecentlyStoppedStream(null)
+      }
+    }
+
+    checkRecentlyStoppedStream()
+    // Check every 30 seconds to update the resume option
+    const interval = setInterval(checkRecentlyStoppedStream, 30000)
+    return () => clearInterval(interval)
+  }, [selectedGameId, getRecentlyStoppedStream, isRecording])
 
   const computeEventLabelFromGame = (game) => {
     if (!game) return ''
@@ -1035,7 +1063,7 @@ function VideoRecorder() {
     }
   }
 
-  const startRecording = async () => {
+  const startRecording = async (resumeStreamId = null) => {
     if (!stream) return
     const ok = await ensureEventSelected()
     if (!ok) {
@@ -1061,7 +1089,7 @@ function VideoRecorder() {
       return
     }
     
-    console.log('🎬 Starting recording with gameId:', currentGameIdRef.current, 'state gameId:', selectedGameId)
+    console.log('🎬 Starting recording with gameId:', currentGameIdRef.current, 'state gameId:', selectedGameId, 'resumeStreamId:', resumeStreamId)
 
     // Reactivate stream if it exists (for restarting recording)
     let nextChunkIndex = 0
@@ -1218,14 +1246,18 @@ function VideoRecorder() {
         if (!whipUrlToUse) {
           try {
              const gameId = currentGameIdRef.current || selectedGameId
-             console.log('🔄 Creating NEW Cloudflare stream for game:', gameId)
-             const streamData = await createStream(gameId)
+             console.log('🔄 Creating NEW Cloudflare stream for game:', gameId, resumeStreamId ? '(resuming)' : '(new)')
+             const streamData = await createStream(gameId, resumeStreamId)
                if (streamData) {
                setStreamId(streamData.id)
                // IMPORTANT: Set the APP viewer URL, not the Cloudflare raw URL
                // Cloudflare raw URL (m3u8) cannot be played directly in browser
                const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
                setStreamUrl(appViewerUrl)
+               // Clear recently stopped stream since we're resuming
+               if (resumeStreamId) {
+                 setRecentlyStoppedStream(null)
+               }
                
                // Keep the raw stream URL for internal use if needed, or just rely on ID
                whipUrlToUse = streamData.whipUrl
@@ -2190,6 +2222,27 @@ function VideoRecorder() {
                       </p>
                     )}
                   </div>
+
+                  {/* Resume Recording Button - Show if there's a recently stopped stream */}
+                  {recentlyStoppedStream && selectedGameId && (
+                    <div className="mb-4 bg-blue-900/30 border border-blue-700 rounded-lg p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-blue-300 mb-1">Resume Previous Recording</p>
+                          <p className="text-xs text-gray-400">
+                            You stopped recording recently. You can resume to the same stream link.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => startRecording(recentlyStoppedStream.id)}
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm"
+                        >
+                          <Video className="w-4 h-4" />
+                          <span>Resume Recording</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Event selection reminder - Start Recording button removed (now in modal) */}
                   {!selectedGameId && (
