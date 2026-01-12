@@ -159,22 +159,41 @@ function StreamViewer({ streamId }) {
             const cfData = await cfResponse.json()
             if (cfData?.success && cfData?.result) {
               const liveInput = cfData.result
+              
+              // Log full details for debugging
+              console.log('☁️ [VIEWER] Cloudflare Live Input Full Response:', JSON.stringify(liveInput, null, 2))
               console.log('☁️ [VIEWER] Cloudflare Live Input Status:', {
                 uid: liveInput.uid,
                 status: liveInput.status,
                 hasWebRTCPlayback: !!liveInput.webRTC?.playback?.url,
                 hasHLSPlayback: !!liveInput.hlsPlayback?.url,
                 webRTCPlaybackUrl: liveInput.webRTC?.playback?.url,
-                hlsPlaybackUrl: liveInput.hlsPlayback?.url
+                hlsPlaybackUrl: liveInput.hlsPlayback?.url,
+                // Check for other possible playback URL fields
+                playbackUrl: liveInput.playback?.url,
+                hls: liveInput.hls,
+                webRTC: liveInput.webRTC
               })
               
-              // Use the actual playback URL from Cloudflare API if available
-              const apiPlaybackUrl = liveInput.webRTC?.playback?.url || liveInput.hlsPlayback?.url
+              // Try multiple possible playback URL locations
+              const apiPlaybackUrl = liveInput.webRTC?.playback?.url 
+                || liveInput.hlsPlayback?.url 
+                || liveInput.playback?.url
+                || (liveInput.hls?.playback?.url)
+                || (liveInput.webRTC?.playback?.hls)
+              
               if (apiPlaybackUrl && !candidateUrls.includes(apiPlaybackUrl)) {
                 candidateUrls.unshift(apiPlaybackUrl) // Add to front as highest priority
                 console.log('✅ [VIEWER] Using playback URL from Cloudflare API:', apiPlaybackUrl)
+              } else if (!apiPlaybackUrl) {
+                console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', liveInput.status)
               }
+            } else {
+              console.warn('⚠️ [VIEWER] Cloudflare API response was not successful:', cfData)
             }
+          } else {
+            const errorText = await cfResponse.text()
+            console.warn('⚠️ [VIEWER] Cloudflare API request failed:', cfResponse.status, errorText)
           }
         } catch (e) {
           console.warn('⚠️ [VIEWER] Could not query Cloudflare API:', e.message)
