@@ -706,8 +706,17 @@ function VideoRecorder() {
     const dateStr = date ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'No Date'
     const timeStr = game.gameTime ? game.gameTime.slice(0, 5) : ''
     const team = availableTeams.find(t => t.id === game.teamId) || organization?.teams?.find(t => t.id === game.teamId)
+    const eventType = game.eventType || 'game'
+    
+    if (eventType === 'game') {
     const vs = game.opponent || ''
     return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} vs ${vs}`
+    } else if (eventType === 'practice') {
+      return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} • Practice`
+    } else if (eventType === 'skills') {
+      return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} • Skills`
+    }
+    return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'}`
   }
 
   const createThumbnailAndDuration = async (videoBlob) => {
@@ -806,19 +815,20 @@ function VideoRecorder() {
       return null
     }
 
-    if (eventType === 'game' && !eventUseManualGame && eventExistingGameId) {
+    // If an existing event is selected (game, practice, or skills), use it
+    if (!eventUseManualGame && eventExistingGameId) {
       // Set both state and ref immediately
       setSelectedGameId(eventExistingGameId)
       currentGameIdRef.current = eventExistingGameId
       const g = organization?.games?.find(x => x.id === eventExistingGameId)
-      setEventSummary(g ? computeEventLabelFromGame(g) : 'Game selected')
+      setEventSummary(g ? computeEventLabelFromGame(g) : 'Event selected')
       
-      // Create stream for this game only if streaming is enabled
+      // Create stream for this event only if streaming is enabled
       let streamData = null
       
       if (enableLiveStreaming && hasStreamingPermission) {
       try {
-        console.log('🔄 Creating stream for game:', eventExistingGameId)
+        console.log('🔄 Creating stream for event:', eventExistingGameId)
         
         // Use createStream from OrgContext (Now Cloudflare-powered)
         if (createStream) {
@@ -851,7 +861,7 @@ function VideoRecorder() {
         console.log('ℹ️ Live streaming not enabled for this recording')
       }
       
-      console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
+      console.log('✅ Existing event selected, gameId set:', eventExistingGameId)
       return true
     }
 
@@ -1159,11 +1169,6 @@ function VideoRecorder() {
     // Reactivate stream if it exists (for restarting recording)
     let nextChunkIndex = 0
     let whipUrlToUse = null
-    
-    // Check if we have whipUrl in ref or state
-    if (whipUrlRef.current) {
-      whipUrlToUse = whipUrlRef.current
-    }
 
     // Helper to push stream via WHIP
     const pushToWhip = async (url, mediaStream) => {
@@ -1320,32 +1325,30 @@ function VideoRecorder() {
           }
         }
         
-        // Create or reactivate stream - always call createStream to handle reactivation
-        // Only if we don't have a whip URL yet or we're resuming
-        if (!whipUrlToUse || streamIdToResume) {
-          try {
-             const gameId = currentGameIdRef.current || selectedGameId
-             console.log('🔄 Creating/reactivating Cloudflare stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
-             const streamData = await createStream(gameId, streamIdToResume)
+        // Always create/reactivate stream when restarting (even if we have an old whipUrl)
+        // This ensures the stream is reactivated and the URL is updated
+        try {
+           const gameId = currentGameIdRef.current || selectedGameId
+           console.log('🔄 Creating/reactivating Cloudflare stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
+           const streamData = await createStream(gameId, streamIdToResume)
                if (streamData) {
                setStreamId(streamData.id)
                // IMPORTANT: Set the APP viewer URL, not the Cloudflare raw URL
                // Cloudflare raw URL (m3u8) cannot be played directly in browser
                const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
                setStreamUrl(appViewerUrl)
-               // Clear recently stopped stream since we're resuming
-               if (streamIdToResume) {
-                 setRecentlyStoppedStream(null)
-               }
+             // Clear recently stopped stream since we're resuming
+             if (streamIdToResume) {
+               setRecentlyStoppedStream(null)
+             }
                
                // Keep the raw stream URL for internal use if needed, or just rely on ID
                whipUrlToUse = streamData.whipUrl
                whipUrlRef.current = streamData.whipUrl // Save to ref
-               console.log('✅ Stream Created/Reactivated. Viewer URL:', appViewerUrl)
+             console.log('✅ Stream Created/Reactivated. Viewer URL:', appViewerUrl)
              }
           } catch (err) {
-             console.error('❌ Failed to create/reactivate stream:', err)
-          }
+           console.error('❌ Failed to create/reactivate stream:', err)
         }
     }
 
@@ -1765,9 +1768,17 @@ function VideoRecorder() {
                     const team = organization?.teams?.find(t => t.id === event.teamId)
                     const season = organization?.seasons?.find(s => s.id === event.seasonId)
                     const time = event.gameTime ? formatTimeForDisplay(event.gameTime) : ''
-                    const typeLabel = event.eventType === 'game' ? 'Game' : event.eventType === 'practice' ? 'Practice' : 'Skills'
-                    const opponent = event.opponent ? ` vs ${event.opponent}` : ''
-                    return `${typeLabel}${opponent} - ${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
+                    const eventType = event.eventType || 'game'
+                    
+                    if (eventType === 'game') {
+                      const opponent = event.opponent ? ` vs ${event.opponent}` : ''
+                      return `Game${opponent} - ${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
+                    } else if (eventType === 'practice') {
+                      return `Practice - ${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
+                    } else if (eventType === 'skills') {
+                      return `Skills - ${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
+                    }
+                    return `${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
                   }
                   
                   return (
@@ -1796,6 +1807,8 @@ function VideoRecorder() {
                                       setEventTeamId(event.teamId)
                                       setEventSeasonId(event.seasonId)
                                     } else {
+                                      // For practice/skills, also set the existing game ID to track selection
+                                      setEventExistingGameId(event.id)
                                       setEventTeamId(event.teamId)
                                       setEventSeasonId(event.seasonId)
                                       setEventDate(event.gameDate)
@@ -1805,8 +1818,7 @@ function VideoRecorder() {
                                     }
                                   }}
                                   className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                                    (isGame && eventExistingGameId === event.id) || 
-                                    (!isGame && eventTeamId === event.teamId && eventSeasonId === event.seasonId && eventDate === event.gameDate)
+                                    eventExistingGameId === event.id
                                       ? 'border-blue-500 bg-blue-900 bg-opacity-30'
                                       : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
                                   }`}

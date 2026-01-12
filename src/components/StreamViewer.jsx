@@ -526,7 +526,7 @@ function StreamViewer({ streamId, isPreview = false }) {
               )}
                 {organization?.name && eventDisplay && <span className="text-gray-600">•</span>}
               <span className="text-xs sm:text-sm text-gray-300 font-medium truncate">
-                  {eventType === 'game' ? eventDisplay : `• ${eventDisplay}`}
+                  {eventDisplay}
               </span>
               </div>
             </div>
