@@ -78,116 +78,117 @@ function OrganizationalDashboard() {
     <div className="h-screen bg-gray-900 text-white flex flex-col overflow-hidden">
       <div className="flex-shrink-0 p-4 sm:p-6 lg:p-8 pb-0">
         <div className="max-w-7xl mx-auto">
-        {/* Database Error Banner */}
-        {databaseError && (
-          <div className="mb-4 bg-yellow-900 bg-opacity-30 border border-yellow-700 rounded-lg p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-yellow-400">⚠️</span>
-              <p className="text-yellow-200">{databaseError}</p>
-            </div>
-            <button
-              onClick={clearDatabaseError}
-              className="text-yellow-400 hover:text-yellow-300 px-3 py-1 rounded hover:bg-yellow-900 bg-opacity-20"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-        
-        <div className="mb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold mb-2">Organizational Dashboard</h1>
-              <p className="text-sm sm:text-base text-gray-400">Manage your organization, teams, and members</p>
-            </div>
-            {/* Organization Switcher - only show if user is part of multiple orgs */}
-            {organizations && organizations.length > 1 && (
+          {/* Database Error Banner */}
+          {databaseError && (
+            <div className="mb-4 bg-yellow-900 bg-opacity-30 border border-yellow-700 rounded-lg p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="text-gray-400 text-sm whitespace-nowrap">Organization:</span>
-                <div className="w-full sm:w-64">
-                  <Dropdown
-                    options={orgOptions}
-                    value={selectedOrgId || organization?.id || ''}
-                    onChange={(orgId) => {
-                      if (orgId && orgId !== selectedOrgId) {
-                        switchOrganization(orgId)
-                      }
-                    }}
-                    placeholder="Select organization..."
-                    multiple={false}
-                    showAllOption={false}
-                  />
+                <span className="text-yellow-400">⚠️</span>
+                <p className="text-yellow-200">{databaseError}</p>
+              </div>
+              <button
+                onClick={clearDatabaseError}
+                className="text-yellow-400 hover:text-yellow-300 px-3 py-1 rounded hover:bg-yellow-900 bg-opacity-20"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          
+          <div className="mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold mb-2">Organizational Dashboard</h1>
+                <p className="text-sm sm:text-base text-gray-400">Manage your organization, teams, and members</p>
+              </div>
+              {/* Organization Switcher - only show if user is part of multiple orgs */}
+              {organizations && organizations.length > 1 && (
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-400 text-sm whitespace-nowrap">Organization:</span>
+                  <div className="w-full sm:w-64">
+                    <Dropdown
+                      options={orgOptions}
+                      value={selectedOrgId || organization?.id || ''}
+                      onChange={(orgId) => {
+                        if (orgId && orgId !== selectedOrgId) {
+                          switchOrganization(orgId)
+                        }
+                      }}
+                      placeholder="Select organization..."
+                      multiple={false}
+                      showAllOption={false}
+                    />
+                  </div>
                 </div>
+              )}
+            </div>
+            {/* Show current organization info if user is a member (not owner) */}
+            {organization && !organization.isOwner && (
+              <div className="bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg p-3 mb-4">
+                <p className="text-sm text-blue-300">
+                  You are viewing <strong>{organization.name}</strong> as a <strong>{organization.userRoleInOrg}</strong>.
+                  {organization.isOwner ? ' You have full access.' : ' Some features may be limited based on your role.'}
+                </p>
               </div>
             )}
           </div>
-          {/* Show current organization info if user is a member (not owner) */}
-          {organization && !organization.isOwner && (
-            <div className="bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg p-3 mb-4">
-              <p className="text-sm text-blue-300">
-                You are viewing <strong>{organization.name}</strong> as a <strong>{organization.userRoleInOrg}</strong>.
-                {organization.isOwner ? ' You have full access.' : ' Some features may be limited based on your role.'}
-              </p>
+
+          {/* Tabs */}
+          {tabs.length > 0 && (
+            <div className="border-b border-gray-700 mb-0 flex-shrink-0">
+              <div className="overflow-x-auto -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 scroll-smooth hide-scrollbar">
+                <div className="flex gap-2 min-w-max pb-1">
+                  {tabs.map((tab) => {
+                    const Icon = tab.icon
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${
+                          activeTab === tab.id
+                            ? 'border-blue-500 text-blue-400'
+                            : 'border-transparent text-gray-400 hover:text-gray-300'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4 flex-shrink-0" />
+                        <span>{tab.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </div>
-
-        {/* Tabs */}
-        {tabs.length > 0 && (
-          <div className="border-b border-gray-700 mb-0 flex-shrink-0">
-            <div className="overflow-x-auto -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 scroll-smooth hide-scrollbar">
-              <div className="flex gap-2 min-w-max pb-1">
-                {tabs.map((tab) => {
-                  const Icon = tab.icon
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${
-                        activeTab === tab.id
-                          ? 'border-blue-500 text-blue-400'
-                          : 'border-transparent text-gray-400 hover:text-gray-300'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4 flex-shrink-0" />
-                      <span>{tab.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab Content */}
-        {tabs.length > 0 && (
-          <div className="flex-1 overflow-hidden">
-            <div className="h-full overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8 pt-4">
-              <div className="max-w-7xl mx-auto">
-                {activeTab === 'setup' && tabs.find(t => t.id === 'setup') && <OrgSetup />}
-                {activeTab === 'teams' && tabs.find(t => t.id === 'teams') && <TeamManagement />}
-                {activeTab === 'seasons' && tabs.find(t => t.id === 'seasons') && <SeasonManagement />}
-                {activeTab === 'schedule' && tabs.find(t => t.id === 'schedule') && <GameManagement />}
-                {activeTab === 'recorder' && tabs.find(t => t.id === 'recorder') && <VideoRecorder />}
-                {activeTab === 'videos' && tabs.find(t => t.id === 'videos') && <GameVideoViewer />}
-                {activeTab === 'coaches' && tabs.find(t => t.id === 'coaches') && <CoachManagement />}
-                {activeTab === 'players' && tabs.find(t => t.id === 'players') && <PlayerManagement />}
-                {activeTab === 'parents' && tabs.find(t => t.id === 'parents') && <ParentManagement />}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tabs.length === 0 && (
-          <div className="flex-1 overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8">
-            <div className="max-w-7xl mx-auto">
-              <div className="text-center py-12">
-                <p className="text-gray-400">No permissions available. Please contact your administrator.</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Tab Content */}
+      {tabs.length > 0 && (
+        <div className="flex-1 overflow-hidden">
+          <div className="h-full overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8 pt-4">
+            <div className="max-w-7xl mx-auto">
+              {activeTab === 'setup' && tabs.find(t => t.id === 'setup') && <OrgSetup />}
+              {activeTab === 'teams' && tabs.find(t => t.id === 'teams') && <TeamManagement />}
+              {activeTab === 'seasons' && tabs.find(t => t.id === 'seasons') && <SeasonManagement />}
+              {activeTab === 'schedule' && tabs.find(t => t.id === 'schedule') && <GameManagement />}
+              {activeTab === 'recorder' && tabs.find(t => t.id === 'recorder') && <VideoRecorder />}
+              {activeTab === 'videos' && tabs.find(t => t.id === 'videos') && <GameVideoViewer />}
+              {activeTab === 'coaches' && tabs.find(t => t.id === 'coaches') && <CoachManagement />}
+              {activeTab === 'players' && tabs.find(t => t.id === 'players') && <PlayerManagement />}
+              {activeTab === 'parents' && tabs.find(t => t.id === 'parents') && <ParentManagement />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tabs.length === 0 && (
+        <div className="flex-1 overflow-y-auto hide-scrollbar p-4 sm:p-6 lg:p-8">
+          <div className="max-w-7xl mx-auto">
+            <div className="text-center py-12">
+              <p className="text-gray-400">No permissions available. Please contact your administrator.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
