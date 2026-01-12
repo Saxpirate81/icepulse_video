@@ -303,10 +303,10 @@ function PlayerManagement() {
                     />
                     <p className="text-xs text-gray-400 mt-1">Used for sending invites and notifications. Email aliases (e.g., name+1@example.com) are supported.</p>
                   </div>
-                  {/* Streaming Permission - Only show if player has profile_id (is existing user) */}
-                  {currentEditingPlayer?.profileId ? (
-                    <div className="border-t border-gray-700 pt-4">
-                      <label className="block text-gray-300 mb-2">Streaming Access</label>
+                  {/* Streaming Permission */}
+                  <div className="border-t border-gray-700 pt-4">
+                    <label className="block text-gray-300 mb-2">Streaming Access</label>
+                    {currentEditingPlayer?.profileId ? (
                       <div className="flex items-start gap-3">
                         <input
                           type="checkbox"
@@ -324,14 +324,25 @@ function PlayerManagement() {
                           </p>
                         </div>
                       </div>
-                    </div>
-                  ) : currentEditingPlayer?.isExistingUser ? (
-                    <div className="border-t border-gray-700 pt-4">
-                      <p className="text-xs text-gray-500">
-                        Streaming access can be enabled once this user has signed up and has a profile.
-                      </p>
-                    </div>
-                  ) : null}
+                    ) : (
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          disabled={true}
+                          className="mt-1 w-4 h-4 text-gray-500 bg-gray-700 border-gray-600 rounded opacity-50 cursor-not-allowed"
+                        />
+                        <div className="flex-1">
+                          <label className="text-gray-500 cursor-not-allowed">
+                            Allow Live Streaming
+                          </label>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Streaming access can be enabled once this user has signed up and has a profile. (Profile ID: {currentEditingPlayer?.profileId || 'None'})
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   {/* Show existing team assignments for editing */}
                   {currentEditingPlayer.teamAssignments && currentEditingPlayer.teamAssignments.length > 0 && (
                     <div>
