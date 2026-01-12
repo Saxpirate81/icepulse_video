@@ -1113,7 +1113,23 @@ function VideoRecorder() {
   }
 
   const startRecording = async (resumeStreamId = null) => {
-    if (!stream) return
+    if (!stream) {
+      console.warn('⚠️ Cannot start recording: No camera stream available')
+      return
+    }
+    
+    // Reset any previous recording state
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      console.warn('⚠️ MediaRecorder still active, stopping first...')
+      try {
+        mediaRecorderRef.current.stop()
+      } catch (e) {
+        console.warn('Error stopping previous recorder:', e)
+      }
+      // Clear the ref to ensure we create a new one
+      mediaRecorderRef.current = null
+    }
+    
     const ok = await ensureEventSelected()
     if (!ok) {
       console.warn('⚠️ ensureEventSelected returned false, cannot start recording')
@@ -1287,16 +1303,30 @@ function VideoRecorder() {
       }
     }
 
-    if (streamId && reactivateStream) {
-      // Logic for existing stream...
-    } else if (enableLiveStreaming && hasStreamingPermission && createStream && (currentGameIdRef.current || selectedGameId)) {
-        // Create NEW Stream if not exists or if we need a new input
-        // Only if we don't have a whip URL yet and streaming is enabled
-        if (!whipUrlToUse) {
+    // Always check/create stream if streaming is enabled (even if we have streamId, we might need to reactivate)
+    if (enableLiveStreaming && hasStreamingPermission && createStream && (currentGameIdRef.current || selectedGameId)) {
+        // Check for recently stopped stream if no resumeStreamId provided
+        let streamIdToResume = resumeStreamId
+        if (!streamIdToResume && getRecentlyStoppedStream && (currentGameIdRef.current || selectedGameId)) {
           try {
              const gameId = currentGameIdRef.current || selectedGameId
-             console.log('🔄 Creating NEW Cloudflare stream for game:', gameId, resumeStreamId ? '(resuming)' : '(new)')
-             const streamData = await createStream(gameId, resumeStreamId)
+            const stoppedStream = await getRecentlyStoppedStream(gameId)
+            if (stoppedStream) {
+              streamIdToResume = stoppedStream.id
+              console.log('🔄 Found recently stopped stream to resume:', streamIdToResume)
+            }
+          } catch (err) {
+            console.warn('Error checking for recently stopped stream:', err)
+          }
+        }
+        
+        // Create or reactivate stream - always call createStream to handle reactivation
+        // Only if we don't have a whip URL yet or we're resuming
+        if (!whipUrlToUse || streamIdToResume) {
+          try {
+             const gameId = currentGameIdRef.current || selectedGameId
+             console.log('🔄 Creating/reactivating Cloudflare stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
+             const streamData = await createStream(gameId, streamIdToResume)
                if (streamData) {
                setStreamId(streamData.id)
                // IMPORTANT: Set the APP viewer URL, not the Cloudflare raw URL
@@ -1304,17 +1334,17 @@ function VideoRecorder() {
                const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
                setStreamUrl(appViewerUrl)
                // Clear recently stopped stream since we're resuming
-               if (resumeStreamId) {
+               if (streamIdToResume) {
                  setRecentlyStoppedStream(null)
                }
                
                // Keep the raw stream URL for internal use if needed, or just rely on ID
                whipUrlToUse = streamData.whipUrl
                whipUrlRef.current = streamData.whipUrl // Save to ref
-               console.log('✅ Stream Created. Viewer URL:', appViewerUrl)
+               console.log('✅ Stream Created/Reactivated. Viewer URL:', appViewerUrl)
              }
           } catch (err) {
-             console.error('❌ Failed to create stream:', err)
+             console.error('❌ Failed to create/reactivate stream:', err)
           }
         }
     }
@@ -1362,11 +1392,19 @@ function VideoRecorder() {
     }
     console.log('🎬 Using MediaRecorder mimeType:', mimeType);
 
+    // Create a new MediaRecorder (important for restarting after stop)
     const mediaRecorder = new MediaRecorder(stream, {
       mimeType: mimeType,
     })
 
     mediaRecorderRef.current = mediaRecorder
+    
+    // Ensure we're not already recording
+    if (isRecordingRef.current) {
+      console.warn('⚠️ Already recording, stopping first...')
+      setIsRecording(false)
+      isRecordingRef.current = false
+    }
 
     mediaRecorder.ondataavailable = async (event) => {
       if (event.data && event.data.size > 0) {
@@ -1618,6 +1656,16 @@ function VideoRecorder() {
         clearInterval(chunkIntervalRef.current)
         chunkIntervalRef.current = null
       }
+    }
+
+    // Clear WHIP peer connection
+    if (whipPeerConnectionRef.current) {
+      try {
+        whipPeerConnectionRef.current.close()
+      } catch (e) {
+        console.warn('Error closing WHIP connection:', e)
+      }
+      whipPeerConnectionRef.current = null
     }
 
     // Exit fullscreen when recording stops
@@ -2314,7 +2362,7 @@ function VideoRecorder() {
               ref={videoContainerRef}
               className={`bg-gray-800 rounded-xl ${isRecording ? 'p-0' : 'p-2'} shadow-2xl relative flex-shrink-0 w-full ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
             >
-              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden w-full'} ${!isRecording ? 'flex items-center justify-center' : ''}`} style={!isRecording ? { minHeight: '40vh', maxHeight: '60vh' } : {}}>
+              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden w-full'} ${!isRecording ? 'flex items-center justify-center' : ''}`} style={!isRecording ? { height: '50vh', maxHeight: '50vh' } : {}}>
                 <video
                   ref={videoRef}
                   autoPlay
@@ -2403,12 +2451,12 @@ function VideoRecorder() {
                   )}
 
                   {/* Top right corner: REC indicator and Share button */}
-                  <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 pointer-events-none">
+                <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 pointer-events-none">
                     <div className="flex items-center gap-2 bg-black bg-opacity-80 px-3 py-2 rounded-lg backdrop-blur-sm">
                       <div className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                      </div>
+                </div>
                       <span className="text-white text-base font-bold">REC</span>
                     </div>
                     
@@ -2430,15 +2478,15 @@ function VideoRecorder() {
                   </div>
 
                   {/* Bottom center: Large Stop Recording Button */}
-                  <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto">
-                    <button
-                      onClick={stopRecording}
+                <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto">
+                  <button
+                    onClick={stopRecording}
                       className="flex items-center gap-3 px-8 py-4 bg-red-600 hover:bg-red-700 rounded-xl font-bold text-lg sm:text-xl transition-all shadow-2xl border-2 border-red-400 text-white transform hover:scale-105 active:scale-95"
-                    >
+                  >
                       <Square className="w-6 h-6 sm:w-7 sm:h-7 fill-current" />
-                      <span>Stop Recording</span>
-                    </button>
-                  </div>
+                    <span>Stop Recording</span>
+                  </button>
+                </div>
                 </>
               )}
 
@@ -2456,10 +2504,10 @@ function VideoRecorder() {
             </div>
           </div>
 
-          {/* Controls Section - Centered below video, fits on screen */}
+          {/* Controls Section - Centered below video, scrollable with hidden scrollbar */}
               {!isRecording && (
-            <div className="flex-shrink-0 flex flex-col items-center gap-2 min-h-0 overflow-y-auto hide-scrollbar">
-              <div className="w-full max-w-2xl flex flex-col gap-2">
+            <div className="flex-1 flex flex-col items-center gap-2 min-h-0 overflow-y-auto hide-scrollbar pb-2">
+              <div className="w-full max-w-2xl flex flex-col gap-2 flex-shrink-0">
                 {/* Event Summary Card */}
                 <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
                   <div className="flex flex-col items-center gap-3 mb-2">
@@ -2570,7 +2618,7 @@ function VideoRecorder() {
                 <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
                   <p className="text-xs text-gray-400 mb-3 font-medium uppercase tracking-wide text-center">Settings</p>
                   <div className="flex flex-col gap-3">
-                    {/* Camera Controls */}
+                      {/* Camera Controls */}
                     {cameras.length > 1 && (
                       <div>
                         <label className="block text-xs text-gray-400 mb-2 text-center">Camera</label>
@@ -2599,10 +2647,10 @@ function VideoRecorder() {
                             icon={<Camera className="w-4 h-4 text-gray-400 flex-shrink-0" />}
                           />
                         )}
-                      </div>
+                        </div>
                     )}
 
-                    {/* Audio Toggle */}
+                      {/* Audio Toggle */}
                     <div>
                       <label className="block text-xs text-gray-400 mb-2 text-center">Audio</label>
                       <button
@@ -2628,8 +2676,8 @@ function VideoRecorder() {
                         )}
                       </button>
                     </div>
-                  </div>
-                </div>
+            </div>
+          </div>
 
                 {/* Event Selection Prompt */}
                 {!selectedGameId && (
@@ -2645,7 +2693,22 @@ function VideoRecorder() {
                 {/* Start Recording Button - Large, prominent */}
                 {selectedGameId && stream && !isRecording && (
                   <button
-                    onClick={() => startRecording()}
+                    onClick={async () => {
+                      // Check for recently stopped stream to reuse the same URL
+                      let resumeId = null
+                      if (getRecentlyStoppedStream && selectedGameId) {
+                        try {
+                          const stoppedStream = await getRecentlyStoppedStream(selectedGameId)
+                          if (stoppedStream) {
+                            resumeId = stoppedStream.id
+                            console.log('🔄 Found recently stopped stream, will reuse:', resumeId)
+                          }
+                        } catch (err) {
+                          console.warn('Error checking for recently stopped stream:', err)
+                        }
+                      }
+                      startRecording(resumeId)
+                    }}
                     className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-xl font-bold text-base sm:text-lg transition-all shadow-xl transform hover:scale-[1.02] active:scale-[0.98]"
                   >
                     <Video className="w-5 h-5 sm:w-6 sm:h-6" />
