@@ -78,12 +78,21 @@ function PlayerManagement() {
     setPlayerEmail(latestPlayer.email || '')
     setIsExistingUser(latestPlayer.isExistingUser || false)
     
+    console.log('🔍 [PlayerManagement] Editing player:', {
+      id: latestPlayer.id,
+      name: latestPlayer.fullName,
+      profileId: latestPlayer.profileId,
+      isExistingUser: latestPlayer.isExistingUser,
+      hasCheckFunction: !!checkStreamingPermission
+    })
+    
     // Load streaming permission if player has a profile_id
     if (latestPlayer.profileId && checkStreamingPermission) {
       setIsLoadingPermission(true)
       try {
         const hasPermission = await checkStreamingPermission(latestPlayer.profileId)
         setCanStreamLive(hasPermission)
+        console.log('✅ [PlayerManagement] Streaming permission loaded:', hasPermission)
       } catch (error) {
         console.error('Error loading streaming permission:', error)
         setCanStreamLive(false)
@@ -92,6 +101,7 @@ function PlayerManagement() {
       }
     } else {
       setCanStreamLive(false)
+      console.log('⚠️ [PlayerManagement] No profileId or checkStreamingPermission function')
     }
     
     setShowAddModal(true)
@@ -294,7 +304,7 @@ function PlayerManagement() {
                     <p className="text-xs text-gray-400 mt-1">Used for sending invites and notifications. Email aliases (e.g., name+1@example.com) are supported.</p>
                   </div>
                   {/* Streaming Permission - Only show if player has profile_id (is existing user) */}
-                  {currentEditingPlayer?.profileId && (
+                  {currentEditingPlayer?.profileId ? (
                     <div className="border-t border-gray-700 pt-4">
                       <label className="block text-gray-300 mb-2">Streaming Access</label>
                       <div className="flex items-start gap-3">
@@ -315,7 +325,13 @@ function PlayerManagement() {
                         </div>
                       </div>
                     </div>
-                  )}
+                  ) : currentEditingPlayer?.isExistingUser ? (
+                    <div className="border-t border-gray-700 pt-4">
+                      <p className="text-xs text-gray-500">
+                        Streaming access can be enabled once this user has signed up and has a profile.
+                      </p>
+                    </div>
+                  ) : null}
                   {/* Show existing team assignments for editing */}
                   {currentEditingPlayer.teamAssignments && currentEditingPlayer.teamAssignments.length > 0 && (
                     <div>
