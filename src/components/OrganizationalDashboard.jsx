@@ -17,7 +17,7 @@ import Dropdown from './Dropdown'
 function OrganizationalDashboard() {
   const { user } = useAuth()
   const { organization, organizations, selectedOrgId, switchOrganization, saveOrganization, databaseError, clearDatabaseError } = useOrg()
-  const [activeTab, setActiveTab] = useState('setup')
+  const [activeTab, setActiveTab] = useState('schedule')
 
   // Initialize organization if it doesn't exist
   useEffect(() => {
@@ -34,11 +34,12 @@ function OrganizationalDashboard() {
   }, [organization, user, saveOrganization])
 
   // Filter tabs based on user permissions
+  // Schedule tab is first (leftmost) and is the default
   // Setup tab is moved to the end (far right)
   const allTabs = [
+    { id: 'schedule', label: 'Schedule', icon: CalendarDays, permission: 'manage_games' },
     { id: 'teams', label: 'Teams', icon: Users, permission: 'manage_teams' },
     { id: 'seasons', label: 'Seasons/Tournaments', icon: Calendar, permission: 'manage_seasons' },
-    { id: 'schedule', label: 'Schedule', icon: CalendarDays, permission: 'manage_games' },
     { id: 'recorder', label: 'Recorder', icon: Video, permission: 'record_video' },
     { id: 'videos', label: 'Event Videos', icon: Video, permission: 'view_videos' },
     { id: 'coaches', label: 'Coaches', icon: UserCheck, permission: 'manage_coaches' },
@@ -49,13 +50,12 @@ function OrganizationalDashboard() {
 
   const tabs = user ? allTabs.filter(tab => hasPermission(user, tab.permission)) : []
   
-  // Set default tab to first available tab if current tab is not accessible
+  // Set default tab to schedule if available, otherwise first available tab
   useEffect(() => {
     if (tabs.length > 0 && !tabs.find(tab => tab.id === activeTab)) {
-      setActiveTab(tabs[0].id)
-    } else if (tabs.length > 0 && activeTab === 'setup' && !tabs.find(tab => tab.id === 'setup')) {
-      // If setup tab is not available, set to first available tab
-      setActiveTab(tabs[0].id)
+      // Prefer schedule tab if available, otherwise use first available tab
+      const scheduleTab = tabs.find(tab => tab.id === 'schedule')
+      setActiveTab(scheduleTab ? 'schedule' : tabs[0].id)
     }
   }, [tabs, activeTab])
 
