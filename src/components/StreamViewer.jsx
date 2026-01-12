@@ -138,6 +138,49 @@ function StreamViewer({ streamId }) {
         candidateUrls.push(`https://videodelivery.net/${liveInputId}/manifest/video.m3u8`)
       }
 
+      // 4. Query Cloudflare API to get the actual current playback URL (if liveInputId exists)
+      if (liveInputId) {
+        try {
+          const CF_ACCOUNT_ID = "8ddadc04f6a8c0fd32db2fae084995dc"
+          const CF_API_TOKEN = "ZgCaabkk8VGTVH6ZVuIJLgXEPbN2426yM-vtY-uT"
+          
+          const cfResponse = await fetch(
+            `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream/live_inputs/${liveInputId}`,
+            {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${CF_API_TOKEN}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          )
+          
+          if (cfResponse.ok) {
+            const cfData = await cfResponse.json()
+            if (cfData?.success && cfData?.result) {
+              const liveInput = cfData.result
+              console.log('☁️ [VIEWER] Cloudflare Live Input Status:', {
+                uid: liveInput.uid,
+                status: liveInput.status,
+                hasWebRTCPlayback: !!liveInput.webRTC?.playback?.url,
+                hasHLSPlayback: !!liveInput.hlsPlayback?.url,
+                webRTCPlaybackUrl: liveInput.webRTC?.playback?.url,
+                hlsPlaybackUrl: liveInput.hlsPlayback?.url
+              })
+              
+              // Use the actual playback URL from Cloudflare API if available
+              const apiPlaybackUrl = liveInput.webRTC?.playback?.url || liveInput.hlsPlayback?.url
+              if (apiPlaybackUrl && !candidateUrls.includes(apiPlaybackUrl)) {
+                candidateUrls.unshift(apiPlaybackUrl) // Add to front as highest priority
+                console.log('✅ [VIEWER] Using playback URL from Cloudflare API:', apiPlaybackUrl)
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ [VIEWER] Could not query Cloudflare API:', e.message)
+        }
+      }
+
       const uniqueCandidates = [...new Set(candidateUrls.filter(Boolean))]
       console.log('🎬 [VIEWER] Polling candidates:', uniqueCandidates)
 
