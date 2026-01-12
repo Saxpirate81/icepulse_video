@@ -328,41 +328,68 @@ function StreamViewer({ streamId, isPreview = false }) {
               // Check if stream has an active publisher (someone is broadcasting)
               // Cloudflare status can be: 'connected' (publisher connected), 'disconnected', or null (no publisher yet)
               const hasActivePublisher = streamStatus === 'connected'
+              const browserInfo = getBrowserInfo()
               
-              // For LIVE streams: Always try WebRTC playback if URL is available (HLS not available during live)
-              // WebRTC will retry on 409 errors until publisher connects
-              // For VOD streams: Use HLS playback
-              if (webRTCPlaybackUrl) {
-                const browserInfo = getBrowserInfo()
-                
-                // Safari does not support WHEP (WebRTC-HTTP Egress Protocol) for live streaming
-                if (browserInfo.isSafari) {
-                  console.warn('⚠️ [VIEWER] Safari does not support WHEP protocol for live streaming', browserInfo)
-                  setError(`Safari does not support live streaming playback. Cloudflare Stream's live broadcasts use WHEP (WebRTC-HTTP Egress Protocol), which is not supported in Safari. Please use Chrome, Firefox, or Edge to view live streams. Recorded videos will be available after the stream ends.`)
-                  return
+              // For mobile devices: Use HLS playback (works on mobile, Cloudflare provides HLS for live streams)
+              // For desktop browsers: Prefer WebRTC (lower latency) but allow HLS fallback
+              if (browserInfo.isMobile || browserInfo.isIOS) {
+                // Mobile devices: Use HLS for live streams (Cloudflare provides HLS URLs for live streams)
+                if (hlsPlaybackUrl) {
+                  candidateUrls.unshift(hlsPlaybackUrl)
+                  console.log('✅ [VIEWER] Mobile device detected - Using HLS playback for live stream:', hlsPlaybackUrl)
+                } else if (webRTCPlaybackUrl) {
+                  // Fallback to WebRTC if HLS not available (shouldn't happen with Cloudflare)
+                  console.warn('⚠️ [VIEWER] Mobile device but no HLS URL, trying WebRTC (may not work):', webRTCPlaybackUrl)
+                  if (isWebRTCSupported()) {
+                    setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
+                    return
+                  } else {
+                    setError('Live streaming is not available on this device. Please try a different browser or device.')
+                    return
+                  }
                 }
-                
-                // Check WebRTC support before attempting
-                if (!isWebRTCSupported()) {
-                  console.warn('⚠️ [VIEWER] WebRTC not supported, cannot play live stream', browserInfo)
-                  setError(`Live streaming requires WebRTC support, which is not available in this browser. Please use Chrome, Firefox, or Edge desktop browsers.`)
-                  return
-                }
-                
-                // Always try WebRTC for live streams (will retry on 409 if no publisher yet)
-                if (hasActivePublisher) {
-                  console.log('✅ [VIEWER] Stream has active publisher - Using WebRTC playback:', webRTCPlaybackUrl)
-                } else {
-                  console.log('⏳ [VIEWER] No active publisher yet, trying WebRTC (will retry on 409):', webRTCPlaybackUrl)
-                }
-                setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
-                return // Exit early, don't poll for HLS
-              } else if (hlsPlaybackUrl) {
-                // No WebRTC but HLS available - might be VOD
-                candidateUrls.unshift(hlsPlaybackUrl)
-                console.log('✅ [VIEWER] Using HLS playback (VOD):', hlsPlaybackUrl)
               } else {
-                console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', streamStatus)
+                // Desktop browsers: Prefer WebRTC (lower latency) but allow HLS fallback
+                if (webRTCPlaybackUrl) {
+                  // Check WebRTC support before attempting
+                  if (!isWebRTCSupported()) {
+                    console.warn('⚠️ [VIEWER] WebRTC not supported, falling back to HLS', browserInfo)
+                    if (hlsPlaybackUrl) {
+                      candidateUrls.unshift(hlsPlaybackUrl)
+                      console.log('✅ [VIEWER] Using HLS playback (WebRTC not supported):', hlsPlaybackUrl)
+                    } else {
+                      setError('Live streaming requires WebRTC or HLS support, which is not available in this browser.')
+                      return
+                    }
+                  } else {
+                    // Safari does not support WHEP (WebRTC-HTTP Egress Protocol) for live streaming
+                    if (browserInfo.isSafari) {
+                      console.warn('⚠️ [VIEWER] Safari does not support WHEP protocol, using HLS instead', browserInfo)
+                      if (hlsPlaybackUrl) {
+                        candidateUrls.unshift(hlsPlaybackUrl)
+                        console.log('✅ [VIEWER] Using HLS playback (Safari):', hlsPlaybackUrl)
+                      } else {
+                        setError(`Safari does not support live streaming playback. Cloudflare Stream's live broadcasts use WHEP (WebRTC-HTTP Egress Protocol), which is not supported in Safari. Please use Chrome, Firefox, or Edge to view live streams.`)
+                        return
+                      }
+                    } else {
+                      // Desktop Chrome/Firefox/Edge: Use WebRTC for live streams (will retry on 409 if no publisher yet)
+                      if (hasActivePublisher) {
+                        console.log('✅ [VIEWER] Stream has active publisher - Using WebRTC playback:', webRTCPlaybackUrl)
+                      } else {
+                        console.log('⏳ [VIEWER] No active publisher yet, trying WebRTC (will retry on 409):', webRTCPlaybackUrl)
+                      }
+                      setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
+                      return // Exit early, don't poll for HLS
+                    }
+                  }
+                } else if (hlsPlaybackUrl) {
+                  // No WebRTC but HLS available - use HLS (might be VOD or live stream without WebRTC)
+                  candidateUrls.unshift(hlsPlaybackUrl)
+                  console.log('✅ [VIEWER] Using HLS playback (no WebRTC URL):', hlsPlaybackUrl)
+                } else {
+                  console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', streamStatus)
+                }
               }
             } else {
               console.warn('⚠️ [VIEWER] Cloudflare API response was not successful:', cfData)
