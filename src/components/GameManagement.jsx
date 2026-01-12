@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useOrg } from '../context/OrgContext'
-import { Calendar, Plus, Trash2, X, Clock, Users, Trophy, Edit2 } from 'lucide-react'
+import { Calendar, Plus, Trash2, X, Clock, Users, Trophy, Edit2, Sparkles, Dumbbell } from 'lucide-react'
 import Dropdown from './Dropdown'
 import LocationSearch from './LocationSearch'
 
@@ -8,6 +8,7 @@ function GameManagement() {
   const { organization, addGame, updateGame, deleteGame } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingGame, setEditingGame] = useState(null)
+  const [eventType, setEventType] = useState('game') // 'game' | 'practice' | 'skills'
   const [selectedTeamId, setSelectedTeamId] = useState(null)
   const [selectedSeasonId, setSelectedSeasonId] = useState(null)
   const [gameDate, setGameDate] = useState('')
@@ -20,6 +21,7 @@ function GameManagement() {
 
   // Reset form when opening/closing modal
   const resetForm = () => {
+    setEventType('game')
     setSelectedTeamId(null)
     setSelectedSeasonId(null)
     setGameDate('')
@@ -31,15 +33,18 @@ function GameManagement() {
   }
 
   const handleAdd = () => {
-    if (selectedTeamId && selectedSeasonId && gameDate && gameTime && opponent.trim()) {
+    // For games, opponent is required. For practice/skills, it's optional
+    const requiresOpponent = eventType === 'game'
+    if (selectedTeamId && selectedSeasonId && gameDate && gameTime && (!requiresOpponent || opponent.trim())) {
       addGame({
         teamId: selectedTeamId,
         seasonId: selectedSeasonId,
         gameDate,
         gameTime,
-        opponent: opponent.trim(),
+        opponent: opponent.trim() || null,
         location: location.trim() || null,
-        notes: notes.trim() || null
+        notes: notes.trim() || null,
+        eventType: eventType
       })
       resetForm()
       setShowAddModal(false)
@@ -48,6 +53,7 @@ function GameManagement() {
 
   const handleEdit = (game) => {
     setEditingGame(game)
+    setEventType(game.eventType || 'game')
     setSelectedTeamId(game.teamId)
     setSelectedSeasonId(game.seasonId)
     setGameDate(game.gameDate || '')
@@ -59,15 +65,17 @@ function GameManagement() {
   }
 
   const handleUpdate = () => {
-    if (selectedTeamId && selectedSeasonId && gameDate && gameTime && opponent.trim() && editingGame) {
+    const requiresOpponent = eventType === 'game'
+    if (selectedTeamId && selectedSeasonId && gameDate && gameTime && (!requiresOpponent || opponent.trim()) && editingGame) {
       updateGame(editingGame.id, {
         teamId: selectedTeamId,
         seasonId: selectedSeasonId,
         gameDate,
         gameTime,
-        opponent: opponent.trim(),
+        opponent: opponent.trim() || null,
         location: location.trim() || null,
-        notes: notes.trim() || null
+        notes: notes.trim() || null,
+        eventType: eventType
       })
       resetForm()
       setShowAddModal(false)
@@ -157,7 +165,7 @@ function GameManagement() {
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
         >
           <Plus className="w-5 h-5" />
-          <span>Add Game</span>
+          <span>Add Event</span>
         </button>
       </div>
 
@@ -190,7 +198,7 @@ function GameManagement() {
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
+                            <div className="flex items-center gap-3 mb-2 flex-wrap">
                               <div className="flex items-center gap-2">
                                 <Clock className="w-4 h-4 text-gray-400" />
                                 <span className="text-white font-medium">
@@ -198,6 +206,18 @@ function GameManagement() {
                                 </span>
                               </div>
                               <span className="text-gray-400">•</span>
+                              {game.eventType && game.eventType !== 'game' && (
+                                <>
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    game.eventType === 'practice' 
+                                      ? 'bg-purple-900 bg-opacity-50 text-purple-300'
+                                      : 'bg-emerald-900 bg-opacity-50 text-emerald-300'
+                                  }`}>
+                                    {game.eventType === 'practice' ? 'Practice' : 'Skills'}
+                                  </span>
+                                  <span className="text-gray-400">•</span>
+                                </>
+                              )}
                               <div className="flex items-center gap-2">
                                 <Users className="w-4 h-4 text-gray-400" />
                                 <span className="text-gray-300">{team?.name || 'Unknown Team'}</span>
@@ -255,7 +275,7 @@ function GameManagement() {
           <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold">
-                {isNew ? 'Add Game' : 'Edit Game'}
+                {isNew ? 'Add Event' : 'Edit Event'}
               </h3>
               <button
                 onClick={handleCancel}
@@ -266,6 +286,60 @@ function GameManagement() {
             </div>
 
             <div className="space-y-4">
+              {/* Event Type Selector */}
+              <div>
+                <label className="block text-gray-300 mb-2">Event Type *</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEventType('game')}
+                    className={`p-3 rounded-lg border text-left transition-colors ${
+                      eventType === 'game'
+                        ? 'border-blue-700 bg-blue-900 bg-opacity-20'
+                        : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Calendar className="w-4 h-4 text-blue-300" />
+                      <span className="font-semibold">Game</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Scheduled game with opponent</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEventType('practice')}
+                    className={`p-3 rounded-lg border text-left transition-colors ${
+                      eventType === 'practice'
+                        ? 'border-purple-700 bg-purple-900 bg-opacity-20'
+                        : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Dumbbell className="w-4 h-4 text-purple-300" />
+                      <span className="font-semibold">Practice</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Practice session for team</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEventType('skills')}
+                    className={`p-3 rounded-lg border text-left transition-colors ${
+                      eventType === 'skills'
+                        ? 'border-emerald-700 bg-emerald-900 bg-opacity-20'
+                        : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Sparkles className="w-4 h-4 text-emerald-300" />
+                      <span className="font-semibold">Skills</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Skills/drills session</p>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-gray-300 mb-2">Team *</label>
                 <Dropdown
@@ -314,14 +388,16 @@ function GameManagement() {
               </div>
 
               <div>
-                <label className="block text-gray-300 mb-2">Opponent *</label>
+                <label className="block text-gray-300 mb-2">
+                  Opponent {eventType === 'game' ? '*' : ''}
+                </label>
                 <input
                   type="text"
                   value={opponent}
                   onChange={(e) => setOpponent(e.target.value)}
                   className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter opponent name"
-                  required
+                  placeholder={eventType === 'game' ? 'Enter opponent name' : 'Enter opponent name (optional)'}
+                  required={eventType === 'game'}
                 />
               </div>
 
@@ -354,10 +430,10 @@ function GameManagement() {
                 </button>
                 <button
                   onClick={isNew ? handleAdd : handleUpdate}
-                  disabled={!selectedTeamId || !selectedSeasonId || !gameDate || !gameTime || !opponent.trim()}
+                  disabled={!selectedTeamId || !selectedSeasonId || !gameDate || !gameTime || (eventType === 'game' && !opponent.trim())}
                   className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
                 >
-                  {isNew ? 'Add Game' : 'Save Changes'}
+                  {isNew ? 'Add Event' : 'Save Changes'}
                 </button>
               </div>
             </div>

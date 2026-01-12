@@ -410,7 +410,8 @@ export function OrgProvider({ children }) {
           gameTime: game.game_time,
           opponent: game.opponent,
           location: game.location,
-          notes: game.notes
+          notes: game.notes,
+          eventType: game.event_type || 'game'
         })),
         locations: (locationsResult.data || []).map(location => ({
           id: location.id,
@@ -1546,7 +1547,8 @@ export function OrgProvider({ children }) {
         gameTime: game.gameTime,
         opponent: game.opponent,
         location: game.location,
-        notes: game.notes
+        notes: game.notes,
+        eventType: game.eventType || 'game'
       }
       // Add to mock organization
       if (organization) {
@@ -1575,6 +1577,7 @@ export function OrgProvider({ children }) {
           opponent: game.opponent,
           location: game.location || null,
           notes: game.notes || null,
+          event_type: game.eventType || 'game',
           created_by: user.id
         })
         .select()
@@ -1596,7 +1599,8 @@ export function OrgProvider({ children }) {
         gameTime: data.game_time,
         opponent: data.opponent,
         location: data.location,
-        notes: data.notes
+        notes: data.notes,
+        eventType: data.event_type || 'game'
       }
     } catch (error) {
       console.error('Error adding game:', error)
@@ -1634,6 +1638,7 @@ export function OrgProvider({ children }) {
       if (updates.opponent !== undefined) updateData.opponent = updates.opponent
       if (updates.location !== undefined) updateData.location = updates.location
       if (updates.notes !== undefined) updateData.notes = updates.notes
+      if (updates.eventType !== undefined) updateData.event_type = updates.eventType
       updateData.updated_at = new Date().toISOString()
 
       const { error } = await supabase
