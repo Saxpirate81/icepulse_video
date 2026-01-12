@@ -5,7 +5,7 @@ import InviteButton from './InviteButton'
 import Dropdown from './Dropdown'
 
 function CoachManagement() {
-  const { organization, addCoach, updateCoach, deleteCoach, sendCoachInvite, resendCoachInvite, assignCoachToTeam, checkStreamingPermission, updateStreamingPermission } = useOrg()
+  const { organization, addCoach, updateCoach, deleteCoach, sendCoachInvite, resendCoachInvite, assignCoachToTeam, checkStreamingPermission, updateStreamingPermission, findProfileByEmail } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingCoach, setEditingCoach] = useState(null)
   const [coachName, setCoachName] = useState('')
@@ -46,11 +46,21 @@ function CoachManagement() {
     setSelectedSeasonId(null) // Reset for new assignment
     setIsExistingUser(coach.isExistingUser || false)
     
-    // Load streaming permission if coach has a profile_id
-    if (coach.profileId && checkStreamingPermission) {
+    // Try to find profileId if not present but email exists
+    let profileIdToUse = coach.profileId
+    if (!profileIdToUse && coach.email && findProfileByEmail) {
+      const foundProfileId = await findProfileByEmail(coach.email)
+      if (foundProfileId) {
+        profileIdToUse = foundProfileId
+        setEditingCoach({ ...coach, profileId: foundProfileId })
+      }
+    }
+    
+    // Load streaming permission if we have a profile_id
+    if (profileIdToUse && checkStreamingPermission) {
       setIsLoadingPermission(true)
       try {
-        const hasPermission = await checkStreamingPermission(coach.profileId)
+        const hasPermission = await checkStreamingPermission(profileIdToUse)
         setCanStreamLive(hasPermission)
       } catch (error) {
         console.error('Error loading streaming permission:', error)
@@ -66,13 +76,24 @@ function CoachManagement() {
   }
 
   const handleStreamingPermissionChange = async (enabled) => {
-    if (!editingCoach?.profileId || !updateStreamingPermission) {
+    // Try to get profileId - either from coach or by looking up email
+    let profileIdToUse = editingCoach?.profileId
+    
+    if (!profileIdToUse && editingCoach?.email && findProfileByEmail) {
+      profileIdToUse = await findProfileByEmail(editingCoach.email)
+      if (profileIdToUse) {
+        setEditingCoach({ ...editingCoach, profileId: profileIdToUse })
+      }
+    }
+    
+    if (!profileIdToUse || !updateStreamingPermission) {
+      alert('Cannot enable streaming: User must have signed up first (profile not found)')
       return
     }
 
     setIsLoadingPermission(true)
     try {
-      const result = await updateStreamingPermission(editingCoach.profileId, enabled)
+      const result = await updateStreamingPermission(profileIdToUse, enabled)
       if (result.success) {
         setCanStreamLive(enabled)
       } else {
@@ -252,42 +273,37 @@ function CoachManagement() {
                   {/* Streaming Permission */}
                   <div className="border-t border-gray-700 pt-4">
                     <label className="block text-gray-300 mb-2">Streaming Access</label>
-                    {editingCoach?.profileId ? (
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={canStreamLive}
-                          onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
-                          disabled={isLoadingPermission}
-                          className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                        />
-                        <div className="flex-1">
-                          <label className="text-white cursor-pointer" onClick={() => !isLoadingPermission && handleStreamingPermissionChange(!canStreamLive)}>
-                            Allow Live Streaming
-                          </label>
-                          <p className="text-xs text-gray-400 mt-1">
-                            Enable this user to stream live video. If disabled while streaming, active streams will be stopped.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={false}
-                          disabled={true}
-                          className="mt-1 w-4 h-4 text-gray-500 bg-gray-700 border-gray-600 rounded opacity-50 cursor-not-allowed"
-                        />
-                        <div className="flex-1">
-                          <label className="text-gray-500 cursor-not-allowed">
-                            Allow Live Streaming
-                          </label>
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={canStreamLive}
+                        onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
+                        disabled={isLoadingPermission || (!editingCoach?.profileId && !editingCoach?.email)}
+                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <div className="flex-1">
+                        <label 
+                          className={`cursor-pointer ${(!editingCoach?.profileId && !editingCoach?.email) ? 'text-gray-500 cursor-not-allowed' : 'text-white'}`}
+                          onClick={() => {
+                            if (!isLoadingPermission && (editingCoach?.profileId || editingCoach?.email)) {
+                              handleStreamingPermissionChange(!canStreamLive)
+                            }
+                          }}
+                        >
+                          Allow Live Streaming
+                        </label>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {editingCoach?.profileId || editingCoach?.email 
+                            ? 'Enable this user to stream live video. If disabled while streaming, active streams will be stopped.'
+                            : 'User must have an email address to enable streaming. Profile will be looked up by email when they sign up.'}
+                        </p>
+                        {editingCoach && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Streaming access can be enabled once this user has signed up and has a profile. (Profile ID: {editingCoach?.profileId || 'None'})
+                            Profile ID: {editingCoach.profileId || 'Not found (will lookup by email)'}
                           </p>
-                        </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   {/* Show existing assignments for editing */}
                   {editingCoach.assignments && editingCoach.assignments.length > 0 && (

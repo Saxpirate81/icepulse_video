@@ -5,7 +5,7 @@ import InviteButton from './InviteButton'
 import Dropdown from './Dropdown'
 
 function ParentManagement() {
-  const { organization, addParent, updateParent, deleteParent, connectParentToPlayer, sendParentInvite, resendParentInvite, checkStreamingPermission, updateStreamingPermission } = useOrg()
+  const { organization, addParent, updateParent, deleteParent, connectParentToPlayer, sendParentInvite, resendParentInvite, checkStreamingPermission, updateStreamingPermission, findProfileByEmail } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingParent, setEditingParent] = useState(null)
   const [parentName, setParentName] = useState('')
@@ -45,11 +45,21 @@ function ParentManagement() {
     setParentEmail(parent.email)
     setSelectedPlayerIds(parent.playerConnections || [])
     
-    // Load streaming permission if parent has a profile_id
-    if (parent.profileId && checkStreamingPermission) {
+    // Try to find profileId if not present but email exists
+    let profileIdToUse = parent.profileId
+    if (!profileIdToUse && parent.email && findProfileByEmail) {
+      const foundProfileId = await findProfileByEmail(parent.email)
+      if (foundProfileId) {
+        profileIdToUse = foundProfileId
+        setEditingParent({ ...parent, profileId: foundProfileId })
+      }
+    }
+    
+    // Load streaming permission if we have a profile_id
+    if (profileIdToUse && checkStreamingPermission) {
       setIsLoadingPermission(true)
       try {
-        const hasPermission = await checkStreamingPermission(parent.profileId)
+        const hasPermission = await checkStreamingPermission(profileIdToUse)
         setCanStreamLive(hasPermission)
       } catch (error) {
         console.error('Error loading streaming permission:', error)
@@ -65,13 +75,24 @@ function ParentManagement() {
   }
 
   const handleStreamingPermissionChange = async (enabled) => {
-    if (!editingParent?.profileId || !updateStreamingPermission) {
+    // Try to get profileId - either from parent or by looking up email
+    let profileIdToUse = editingParent?.profileId
+    
+    if (!profileIdToUse && editingParent?.email && findProfileByEmail) {
+      profileIdToUse = await findProfileByEmail(editingParent.email)
+      if (profileIdToUse) {
+        setEditingParent({ ...editingParent, profileId: profileIdToUse })
+      }
+    }
+    
+    if (!profileIdToUse || !updateStreamingPermission) {
+      alert('Cannot enable streaming: User must have signed up first (profile not found)')
       return
     }
 
     setIsLoadingPermission(true)
     try {
-      const result = await updateStreamingPermission(editingParent.profileId, enabled)
+      const result = await updateStreamingPermission(profileIdToUse, enabled)
       if (result.success) {
         setCanStreamLive(enabled)
       } else {
@@ -240,42 +261,35 @@ function ParentManagement() {
               {editingParent && (
                 <div className="border-t border-gray-700 pt-4">
                   <label className="block text-gray-300 mb-2">Streaming Access</label>
-                  {editingParent?.profileId ? (
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={canStreamLive}
-                        onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
-                        disabled={isLoadingPermission}
-                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                      />
-                      <div className="flex-1">
-                        <label className="text-white cursor-pointer" onClick={() => !isLoadingPermission && handleStreamingPermissionChange(!canStreamLive)}>
-                          Allow Live Streaming
-                        </label>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Enable this user to stream live video. If disabled while streaming, active streams will be stopped.
-                        </p>
-                      </div>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={canStreamLive}
+                      onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
+                      disabled={isLoadingPermission || (!editingParent?.profileId && !editingParent?.email)}
+                      className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <div className="flex-1">
+                      <label 
+                        className={`cursor-pointer ${(!editingParent?.profileId && !editingParent?.email) ? 'text-gray-500 cursor-not-allowed' : 'text-white'}`}
+                        onClick={() => {
+                          if (!isLoadingPermission && (editingParent?.profileId || editingParent?.email)) {
+                            handleStreamingPermissionChange(!canStreamLive)
+                          }
+                        }}
+                      >
+                        Allow Live Streaming
+                      </label>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {editingParent?.profileId || editingParent?.email 
+                          ? 'Enable this user to stream live video. If disabled while streaming, active streams will be stopped.'
+                          : 'User must have an email address to enable streaming. Profile will be looked up by email when they sign up.'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Profile ID: {editingParent.profileId || 'Not found (will lookup by email)'}
+                      </p>
                     </div>
-                  ) : (
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={false}
-                        disabled={true}
-                        className="mt-1 w-4 h-4 text-gray-500 bg-gray-700 border-gray-600 rounded opacity-50 cursor-not-allowed"
-                      />
-                      <div className="flex-1">
-                        <label className="text-gray-500 cursor-not-allowed">
-                          Allow Live Streaming
-                        </label>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Streaming access can be enabled once this user has signed up and has a profile. (Profile ID: {editingParent?.profileId || 'None'})
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 </div>
               )}
 

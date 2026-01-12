@@ -2158,6 +2158,29 @@ export function OrgProvider({ children }) {
     }
   }
 
+  // Find profile by email (helper function)
+  const findProfileByEmail = async (email) => {
+    if (!email) return null
+    
+    try {
+      const { data, error } = await supabase
+        .from('icepulse_profiles')
+        .select('id')
+        .eq('email', email.toLowerCase().trim())
+        .maybeSingle()
+
+      if (error) {
+        console.error('Error finding profile by email:', error)
+        return null
+      }
+
+      return data?.id || null
+    } catch (error) {
+      console.error('Error finding profile by email:', error)
+      return null
+    }
+  }
+
   // Check if a user has streaming permission
   const checkStreamingPermission = async (userId) => {
     if (!userId) return false
@@ -2599,6 +2622,7 @@ export function OrgProvider({ children }) {
     getRecentlyStoppedStream,
     checkStreamingPermission,
     updateStreamingPermission,
+    findProfileByEmail,
     isLoading,
     databaseError,
     clearDatabaseError: () => setDatabaseError(null),

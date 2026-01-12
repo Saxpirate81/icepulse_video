@@ -5,7 +5,7 @@ import InviteButton from './InviteButton'
 import Dropdown from './Dropdown'
 
 function PlayerManagement() {
-  const { organization, addPlayer, updatePlayer, deletePlayer, assignPlayerToTeam, sendPlayerInvite, resendPlayerInvite, checkStreamingPermission, updateStreamingPermission } = useOrg()
+  const { organization, addPlayer, updatePlayer, deletePlayer, assignPlayerToTeam, sendPlayerInvite, resendPlayerInvite, checkStreamingPermission, updateStreamingPermission, findProfileByEmail } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState(null)
   const [playerName, setPlayerName] = useState('')
@@ -82,15 +82,31 @@ function PlayerManagement() {
       id: latestPlayer.id,
       name: latestPlayer.fullName,
       profileId: latestPlayer.profileId,
+      email: latestPlayer.email,
       isExistingUser: latestPlayer.isExistingUser,
       hasCheckFunction: !!checkStreamingPermission
     })
     
-    // Load streaming permission if player has a profile_id
-    if (latestPlayer.profileId && checkStreamingPermission) {
+    // Try to find profileId if not present but email exists
+    let profileIdToUse = latestPlayer.profileId
+    if (!profileIdToUse && latestPlayer.email && findProfileByEmail) {
+      // Try to find profile by email
+      console.log('🔍 [PlayerManagement] No profileId, trying to find by email:', latestPlayer.email)
+      const foundProfileId = await findProfileByEmail(latestPlayer.email)
+      if (foundProfileId) {
+        profileIdToUse = foundProfileId
+        console.log('✅ [PlayerManagement] Found profile by email:', foundProfileId)
+        // Update the player object with found profileId
+        latestPlayer.profileId = foundProfileId
+        setEditingPlayer({ ...latestPlayer, profileId: foundProfileId })
+      }
+    }
+    
+    // Load streaming permission if we have a profile_id
+    if (profileIdToUse && checkStreamingPermission) {
       setIsLoadingPermission(true)
       try {
-        const hasPermission = await checkStreamingPermission(latestPlayer.profileId)
+        const hasPermission = await checkStreamingPermission(profileIdToUse)
         setCanStreamLive(hasPermission)
         console.log('✅ [PlayerManagement] Streaming permission loaded:', hasPermission)
       } catch (error) {
@@ -101,20 +117,33 @@ function PlayerManagement() {
       }
     } else {
       setCanStreamLive(false)
-      console.log('⚠️ [PlayerManagement] No profileId or checkStreamingPermission function')
+      console.log('⚠️ [PlayerManagement] No profileId found (tried direct and email lookup)')
     }
     
     setShowAddModal(true)
   }
 
   const handleStreamingPermissionChange = async (enabled) => {
-    if (!currentEditingPlayer?.profileId || !updateStreamingPermission) {
+    // Try to get profileId - either from player or by looking up email
+    let profileIdToUse = currentEditingPlayer?.profileId
+    
+    if (!profileIdToUse && currentEditingPlayer?.email && findProfileByEmail) {
+      // Try to find profile by email
+      profileIdToUse = await findProfileByEmail(currentEditingPlayer.email)
+      if (profileIdToUse) {
+        // Update the editing player with found profileId
+        setEditingPlayer({ ...currentEditingPlayer, profileId: profileIdToUse })
+      }
+    }
+    
+    if (!profileIdToUse || !updateStreamingPermission) {
+      alert('Cannot enable streaming: User must have signed up first (profile not found)')
       return
     }
 
     setIsLoadingPermission(true)
     try {
-      const result = await updateStreamingPermission(currentEditingPlayer.profileId, enabled)
+      const result = await updateStreamingPermission(profileIdToUse, enabled)
       if (result.success) {
         setCanStreamLive(enabled)
       } else {
@@ -306,42 +335,37 @@ function PlayerManagement() {
                   {/* Streaming Permission */}
                   <div className="border-t border-gray-700 pt-4">
                     <label className="block text-gray-300 mb-2">Streaming Access</label>
-                    {currentEditingPlayer?.profileId ? (
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={canStreamLive}
-                          onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
-                          disabled={isLoadingPermission}
-                          className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                        />
-                        <div className="flex-1">
-                          <label className="text-white cursor-pointer" onClick={() => !isLoadingPermission && handleStreamingPermissionChange(!canStreamLive)}>
-                            Allow Live Streaming
-                          </label>
-                          <p className="text-xs text-gray-400 mt-1">
-                            Enable this user to stream live video. If disabled while streaming, active streams will be stopped.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={false}
-                          disabled={true}
-                          className="mt-1 w-4 h-4 text-gray-500 bg-gray-700 border-gray-600 rounded opacity-50 cursor-not-allowed"
-                        />
-                        <div className="flex-1">
-                          <label className="text-gray-500 cursor-not-allowed">
-                            Allow Live Streaming
-                          </label>
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={canStreamLive}
+                        onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
+                        disabled={isLoadingPermission || (!currentEditingPlayer?.profileId && !currentEditingPlayer?.email)}
+                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <div className="flex-1">
+                        <label 
+                          className={`cursor-pointer ${(!currentEditingPlayer?.profileId && !currentEditingPlayer?.email) ? 'text-gray-500 cursor-not-allowed' : 'text-white'}`}
+                          onClick={() => {
+                            if (!isLoadingPermission && (currentEditingPlayer?.profileId || currentEditingPlayer?.email)) {
+                              handleStreamingPermissionChange(!canStreamLive)
+                            }
+                          }}
+                        >
+                          Allow Live Streaming
+                        </label>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {currentEditingPlayer?.profileId || currentEditingPlayer?.email 
+                            ? 'Enable this user to stream live video. If disabled while streaming, active streams will be stopped.'
+                            : 'User must have an email address to enable streaming. Profile will be looked up by email when they sign up.'}
+                        </p>
+                        {currentEditingPlayer && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Streaming access can be enabled once this user has signed up and has a profile. (Profile ID: {currentEditingPlayer?.profileId || 'None'})
+                            Profile ID: {currentEditingPlayer.profileId || 'Not found (will lookup by email)'}
                           </p>
-                        </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   {/* Show existing team assignments for editing */}
                   {currentEditingPlayer.teamAssignments && currentEditingPlayer.teamAssignments.length > 0 && (
