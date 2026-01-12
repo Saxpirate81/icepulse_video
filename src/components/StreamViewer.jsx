@@ -22,7 +22,7 @@ function StreamViewer({ streamId }) {
             *,
             icepulse_games (
               *,
-              icepulse_teams (name),
+              icepulse_teams (name, logo_url),
               icepulse_organizations (name, header_image_url)
             )
           `)
@@ -164,13 +164,15 @@ function StreamViewer({ streamId }) {
             console.log('⏳ [VIEWER] Stream not ready yet (409), will retry...')
             setIsLive(false)
             setError(null) // Clear any previous errors
-            // Retry after a delay (max 10 retries = 50 seconds)
-            if (retryCount < 10 && !cancelled) {
+            // Retry after a delay (max 20 retries = 100 seconds to allow more time for stream to start)
+            if (retryCount < 20 && !cancelled) {
               setTimeout(() => {
                 if (videoElement && !cancelled) {
                   setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
                 }
               }, 5000)
+            } else if (retryCount >= 20) {
+              console.log('⏳ [VIEWER] Max retries reached, stream may not be broadcasting yet')
             }
             return
           }
@@ -193,14 +195,16 @@ function StreamViewer({ streamId }) {
         // For errors, show waiting message instead of error
         setIsLive(false)
         setError(null)
-        // Retry after a delay (max 10 retries = 50 seconds)
-        if (retryCount < 10 && !cancelled) {
+        // Retry after a delay (max 20 retries = 100 seconds to allow more time for stream to start)
+        if (retryCount < 20 && !cancelled) {
           console.log('⏳ [VIEWER] Will retry connection...')
           setTimeout(() => {
             if (videoElement && !cancelled) {
               setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
             }
           }, 5000)
+        } else if (retryCount >= 20) {
+          console.log('⏳ [VIEWER] Max retries reached, stream may not be broadcasting yet')
         }
       }
     }
@@ -460,6 +464,21 @@ function StreamViewer({ streamId }) {
   const team = Array.isArray(game?.icepulse_teams) ? game.icepulse_teams[0] : game?.icepulse_teams
   const organization = Array.isArray(game?.icepulse_organizations) ? game.icepulse_organizations[0] : game?.icepulse_organizations
   const opponent = game?.opponent || 'TBA'
+  const eventType = game?.event_type || 'game'
+  
+  // Format the event display based on type
+  const getEventDisplay = () => {
+    if (eventType === 'game') {
+      return opponent ? `vs ${opponent}` : 'vs TBA'
+    } else if (eventType === 'practice') {
+      return 'Practice'
+    } else if (eventType === 'skills') {
+      return 'Skills'
+    }
+    return opponent ? `vs ${opponent}` : 'vs TBA'
+  }
+  
+  const eventDisplay = getEventDisplay()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden">
@@ -476,20 +495,35 @@ function StreamViewer({ streamId }) {
           </div>
         )}
         <div className="flex items-center justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
-              {team?.name || 'IcePulse Stream'}
-            </h1>
-            <div className="flex items-center gap-2 mt-0.5">
-              {organization?.name && (
-                <span className="text-xs sm:text-sm text-gray-400 truncate">
-                  {organization.name}
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            {/* Team Logo - positioned to left, height matches title + subtitle combined */}
+            {team?.logo_url && (
+              <img
+                src={team.logo_url}
+                alt={team.name || 'Team logo'}
+                className="object-contain flex-shrink-0"
+                style={{ 
+                  height: 'calc(1.5rem + 0.75rem + 0.125rem)', // Match height of title (text-lg = 1.5rem) + subtitle (text-xs = 0.75rem) + gap (0.125rem)
+                  maxHeight: 'calc(1.5rem + 0.75rem + 0.125rem)',
+                  width: 'auto'
+                }}
+              />
+            )}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
+                {team?.name || 'IcePulse Stream'}
+              </h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                {organization?.name && (
+                  <span className="text-xs sm:text-sm text-gray-400 truncate">
+                    {organization.name}
+                  </span>
+                )}
+                {organization?.name && eventDisplay && <span className="text-gray-600">•</span>}
+                <span className="text-xs sm:text-sm text-gray-300 font-medium truncate">
+                  {eventType === 'game' ? eventDisplay : `• ${eventDisplay}`}
                 </span>
-              )}
-              {organization?.name && opponent && <span className="text-gray-600">•</span>}
-              <span className="text-xs sm:text-sm text-gray-300 font-medium truncate">
-                vs {opponent}
-              </span>
+              </div>
             </div>
           </div>
           {isLive ? (
@@ -511,6 +545,8 @@ function StreamViewer({ streamId }) {
 
       {/* Video Player - Full Screen */}
       <div className="w-full h-screen bg-black flex items-center justify-center pt-16 sm:pt-20 relative">
+        {/* Video container - use CSS to flip only video content, not controls */}
+        <div className="w-full h-full relative video-mirror-container">
         <video
           ref={videoRef}
           className="w-full h-full object-contain"
@@ -520,8 +556,35 @@ function StreamViewer({ streamId }) {
           controlsList="nodownload"
           preload="auto"
           crossOrigin="anonymous"
-          style={{ transform: 'scaleX(-1)' }}
         />
+          {/* CSS to flip video content but keep controls normal */}
+          <style>{`
+            .video-mirror-container video {
+              transform: scaleX(-1);
+            }
+            /* Attempt to reverse controls - may not work in all browsers */
+            .video-mirror-container video::-webkit-media-controls-panel {
+              transform: scaleX(-1);
+            }
+            .video-mirror-container video::-webkit-media-controls-play-button {
+              transform: scaleX(-1);
+            }
+            .video-mirror-container video::-webkit-media-controls-timeline {
+              transform: scaleX(-1);
+            }
+            .video-mirror-container video::-webkit-media-controls-current-time-display,
+            .video-mirror-container video::-webkit-media-controls-time-remaining-display {
+              transform: scaleX(-1);
+            }
+            .video-mirror-container video::-webkit-media-controls-mute-button,
+            .video-mirror-container video::-webkit-media-controls-volume-slider {
+              transform: scaleX(-1);
+            }
+            .video-mirror-container video::-webkit-media-controls-fullscreen-button {
+              transform: scaleX(-1);
+            }
+          `}</style>
+        </div>
         
         {/* Waiting / Offline Overlay - Show when stream is not live */}
         {!isLive && (

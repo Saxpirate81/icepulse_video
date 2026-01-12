@@ -1094,10 +1094,14 @@ function VideoRecorder() {
         setStreamUrl(appViewerUrl)
         console.log('✅ Stream setup complete:', streamData.id)
       } else {
-        console.warn('⚠️ Stream created but no ID returned')
+        console.log('ℹ️ No stream created (streaming disabled or not available)')
       }
       
       console.log('✅ Event created and gameId set:', created.id)
+      
+      // Close the modal after successful event creation
+      setShowEventModal(false)
+      
       return true
     } catch (e) {
       console.error('Error creating event:', e)
@@ -2284,15 +2288,16 @@ function VideoRecorder() {
                     Start Recording
                     </button>
                 ) : (
-                  // If no stream URL yet, show "Save" button that creates event and stream
+                  // If no stream URL yet, show "Save" button that creates event (and stream if enabled)
                     <button
                     onClick={async () => {
                       const success = await ensureEventSelected()
-                      // Don't close modal yet - let user see stream URL if it was created
-                      // Modal will stay open so user can copy/share the stream URL
-                      // User can click "Start Recording" button that appears after stream is created
+                      if (success) {
+                        // Modal will be closed by ensureEventSelected if successful
+                        // If streaming is enabled and stream was created, the button will change to "Start Recording"
+                      }
                     }}
-                    disabled={isCreatingEvent || !stream}
+                    disabled={isCreatingEvent}
                     className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
                   >
                     {isCreatingEvent ? 'Saving…' : 'Save'}
