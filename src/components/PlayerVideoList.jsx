@@ -221,7 +221,17 @@ function PlayerVideoList() {
                   {/* Video info */}
                   <div className="p-4">
                     <h3 className="font-semibold text-white mb-2 line-clamp-2">
-                      {game?.opponent ? `vs ${game.opponent}` : 'Game Video'}
+                      {(() => {
+                        const eventType = game?.eventType || game?.event_type || 'game'
+                        if (eventType === 'game') {
+                          return game?.opponent ? `vs ${game.opponent}` : 'Game Video'
+                        } else if (eventType === 'practice') {
+                          return 'Practice'
+                        } else if (eventType === 'skills') {
+                          return 'Skills'
+                        }
+                        return 'Video'
+                      })()}
                     </h3>
                     <div className="space-y-1 text-sm text-gray-400">
                       {game?.game_date && (

@@ -709,8 +709,9 @@ function VideoRecorder() {
     const eventType = game.eventType || 'game'
     
     if (eventType === 'game') {
-    const vs = game.opponent || ''
-    return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} vs ${vs}`
+      return game.opponent
+        ? `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} vs ${game.opponent}`
+        : `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} Game`
     } else if (eventType === 'practice') {
       return `${dateStr}${timeStr ? ` ${timeStr}` : ''} — ${team?.name || 'Team'} • Practice`
     } else if (eventType === 'skills') {
@@ -1818,7 +1819,7 @@ function VideoRecorder() {
                                     }
                                   }}
                                   className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                                    eventExistingGameId === event.id
+                                    eventExistingGameId && event.id && String(eventExistingGameId) === String(event.id)
                                       ? 'border-blue-500 bg-blue-900 bg-opacity-30'
                                       : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
                                   }`}
@@ -1865,7 +1866,12 @@ function VideoRecorder() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     type="button"
-                    onClick={() => { setEventType('game'); setEventUseManualGame(false); setError(null) }}
+                    onClick={() => { 
+                      setEventType('game'); 
+                      setEventUseManualGame(false); 
+                      setEventExistingGameId(''); // Clear selection when switching to manual mode
+                      setError(null) 
+                    }}
                     className={`p-3 rounded-lg border text-left transition-colors ${
                       eventType === 'game'
                         ? 'border-blue-700 bg-blue-900 bg-opacity-20'
@@ -1881,7 +1887,11 @@ function VideoRecorder() {
 
                   <button
                     type="button"
-                    onClick={() => { setEventType('practice'); setError(null) }}
+                    onClick={() => { 
+                      setEventType('practice'); 
+                      setEventExistingGameId(''); // Clear selection when switching to manual mode
+                      setError(null) 
+                    }}
                     className={`p-3 rounded-lg border text-left transition-colors ${
                       eventType === 'practice'
                         ? 'border-purple-700 bg-purple-900 bg-opacity-20'
@@ -1897,7 +1907,11 @@ function VideoRecorder() {
 
                   <button
                     type="button"
-                    onClick={() => { setEventType('skills'); setError(null) }}
+                    onClick={() => { 
+                      setEventType('skills'); 
+                      setEventExistingGameId(''); // Clear selection when switching to manual mode
+                      setError(null) 
+                    }}
                     className={`p-3 rounded-lg border text-left transition-colors ${
                       eventType === 'skills'
                         ? 'border-emerald-700 bg-emerald-900 bg-opacity-20'

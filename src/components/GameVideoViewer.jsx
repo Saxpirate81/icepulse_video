@@ -142,7 +142,18 @@ function GameVideoViewer() {
         })()
       : ''
     const team = organization?.teams?.find(t => t.id === game.teamId)
-    return `${dateStr} ${time} - ${team?.name || 'Unknown'} vs ${game.opponent}`
+    const eventType = game.eventType || 'game'
+    
+    if (eventType === 'game') {
+      return game.opponent 
+        ? `${dateStr} ${time} - ${team?.name || 'Unknown'} vs ${game.opponent}`
+        : `${dateStr} ${time} - ${team?.name || 'Unknown'} Game`
+    } else if (eventType === 'practice') {
+      return `${dateStr} ${time} - ${team?.name || 'Unknown'} • Practice`
+    } else if (eventType === 'skills') {
+      return `${dateStr} ${time} - ${team?.name || 'Unknown'} • Skills`
+    }
+    return `${dateStr} ${time} - ${team?.name || 'Unknown'}`
   }
 
   const gameOptions = (organization?.games || [])

@@ -113,9 +113,36 @@ function StreamViewer({ streamId, isPreview = false }) {
     pollingStartedRef.current = currentPlaybackUrl
     console.log('🎬 [VIEWER] Starting setup for URL:', currentPlaybackUrl)
 
+    // Check WebRTC support
+    const isWebRTCSupported = () => {
+      return typeof RTCPeerConnection !== 'undefined' && 
+             typeof RTCPeerConnection.prototype.createOffer === 'function'
+    }
+    
+    // Detect browser/device
+    const getBrowserInfo = () => {
+      const ua = navigator.userAgent || navigator.vendor || window.opera
+      const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream
+      // Safari detection: check for Safari but NOT Chrome/Edge (which also contain Safari in UA string)
+      const isSafari = /^((?!chrome|android|edg).)*safari/i.test(ua) || 
+                       (/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/.test(ua))
+      const isChrome = /Chrome/.test(ua) && /Google Inc/.test(navigator.vendor)
+      const isMobile = /Mobile|Android|iPhone|iPad/.test(ua)
+      
+      return { isIOS, isSafari, isChrome, isMobile, ua }
+    }
+
     // Setup WebRTC playback for live streams (WHEP protocol)
     const setupWebRTCPlayback = async (videoElement, playbackUrl, retryCount = 0) => {
       if (cancelled) return
+      
+      // Check WebRTC support first
+      if (!isWebRTCSupported()) {
+        const browserInfo = getBrowserInfo()
+        console.warn('⚠️ [VIEWER] WebRTC not supported in this browser', browserInfo)
+        setError(`WebRTC playback is not supported in this browser. Live streaming requires a WebRTC-compatible browser (Safari desktop, Chrome desktop, Firefox desktop). Mobile browsers have limited WebRTC support.`)
+        return
+      }
       
       try {
         console.log('🎥 [VIEWER] Setting up WebRTC playback:', playbackUrl, retryCount > 0 ? `(retry ${retryCount})` : '')
@@ -194,20 +221,41 @@ function StreamViewer({ streamId, isPreview = false }) {
         videoElement._webrtcPc = pc
         
       } catch (error) {
-        console.error('❌ [VIEWER] WebRTC playback setup failed:', error)
-        // For errors, show waiting message instead of error
+        const browserInfo = getBrowserInfo()
+        console.error('❌ [VIEWER] WebRTC playback setup failed:', error, browserInfo)
+        console.error('❌ [VIEWER] Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+          browser: browserInfo.ua,
+          isIOS: browserInfo.isIOS,
+          isMobile: browserInfo.isMobile
+        })
+        
+        // For errors, show waiting message instead of error (unless it's a clear browser compatibility issue)
         setIsLive(false)
-        setError(null)
+        
+        // Show error message for browser compatibility issues
+        if (browserInfo.isIOS || browserInfo.isMobile) {
+          setError(`Live streaming requires WebRTC support. iOS and mobile browsers have limited WebRTC support for Cloudflare Stream's live broadcasts. Please use a desktop browser (Safari, Chrome, or Firefox) to view live streams.`)
+        } else {
+          setError(null) // Clear error for retries on desktop browsers
+        }
+        
         // Retry after a delay (max 20 retries = 100 seconds to allow more time for stream to start)
-        if (retryCount < 20 && !cancelled) {
+        if (retryCount < 20 && !cancelled && !browserInfo.isIOS && !browserInfo.isMobile) {
           console.log('⏳ [VIEWER] Will retry connection...')
           setTimeout(() => {
             if (videoElement && !cancelled) {
               setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
             }
           }, 5000)
-        } else if (retryCount >= 20) {
-          console.log('⏳ [VIEWER] Max retries reached, stream may not be broadcasting yet')
+        } else if (retryCount >= 20 || browserInfo.isIOS || browserInfo.isMobile) {
+          if (browserInfo.isIOS || browserInfo.isMobile) {
+            console.log('⏳ [VIEWER] Browser does not support WebRTC for live streaming')
+          } else {
+            console.log('⏳ [VIEWER] Max retries reached, stream may not be broadcasting yet')
+          }
         }
       }
     }
@@ -285,6 +333,22 @@ function StreamViewer({ streamId, isPreview = false }) {
               // WebRTC will retry on 409 errors until publisher connects
               // For VOD streams: Use HLS playback
               if (webRTCPlaybackUrl) {
+                const browserInfo = getBrowserInfo()
+                
+                // Safari does not support WHEP (WebRTC-HTTP Egress Protocol) for live streaming
+                if (browserInfo.isSafari) {
+                  console.warn('⚠️ [VIEWER] Safari does not support WHEP protocol for live streaming', browserInfo)
+                  setError(`Safari does not support live streaming playback. Cloudflare Stream's live broadcasts use WHEP (WebRTC-HTTP Egress Protocol), which is not supported in Safari. Please use Chrome, Firefox, or Edge to view live streams. Recorded videos will be available after the stream ends.`)
+                  return
+                }
+                
+                // Check WebRTC support before attempting
+                if (!isWebRTCSupported()) {
+                  console.warn('⚠️ [VIEWER] WebRTC not supported, cannot play live stream', browserInfo)
+                  setError(`Live streaming requires WebRTC support, which is not available in this browser. Please use Chrome, Firefox, or Edge desktop browsers.`)
+                  return
+                }
+                
                 // Always try WebRTC for live streams (will retry on 409 if no publisher yet)
                 if (hasActivePublisher) {
                   console.log('✅ [VIEWER] Stream has active publisher - Using WebRTC playback:', webRTCPlaybackUrl)
@@ -474,13 +538,13 @@ function StreamViewer({ streamId, isPreview = false }) {
   // Format the event display based on type
   const getEventDisplay = () => {
     if (eventType === 'game') {
-      return opponent ? `vs ${opponent}` : 'vs TBA'
+      return opponent ? `vs ${opponent}` : '' // Don't show "vs TBA" or "vs null"
     } else if (eventType === 'practice') {
       return 'Practice'
     } else if (eventType === 'skills') {
       return 'Skills'
     }
-    return opponent ? `vs ${opponent}` : 'vs TBA'
+    return opponent ? `vs ${opponent}` : '' // Don't show "vs TBA" or "vs null"
   }
   
   const eventDisplay = getEventDisplay()
