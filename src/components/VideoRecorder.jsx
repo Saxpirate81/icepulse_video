@@ -30,6 +30,7 @@ function VideoRecorder() {
   const stopStream = orgContext?.stopStream || null
   const reactivateStream = orgContext?.reactivateStream || null
   const getRecentlyStoppedStream = orgContext?.getRecentlyStoppedStream || null
+  const checkStreamingPermission = orgContext?.checkStreamingPermission || null
   
   // For players: get teams/seasons from their assignments
   const [playerTeams, setPlayerTeams] = useState([])
@@ -360,7 +361,43 @@ function VideoRecorder() {
   const [eventNotes, setEventNotes] = useState('')
   const [eventExistingGameId, setEventExistingGameId] = useState('')
   const [eventUseManualGame, setEventUseManualGame] = useState(false)
+  const [enableLiveStreaming, setEnableLiveStreaming] = useState(false)
+  const [hasStreamingPermission, setHasStreamingPermission] = useState(false)
+  const [isCheckingPermission, setIsCheckingPermission] = useState(false)
   const videoRef = useRef(null)
+
+  // Check streaming permission when modal opens and user is available
+  useEffect(() => {
+    const checkPermission = async () => {
+      if (!user?.id || !checkStreamingPermission) {
+        setHasStreamingPermission(false)
+        return
+      }
+      
+      // Organization users and users with explicit permission can stream
+      const isOrgUser = user?.role === 'organization' || user?.role === 'coach'
+      if (isOrgUser) {
+        setHasStreamingPermission(true)
+        return
+      }
+      
+      // For other users, check their profile permission
+      setIsCheckingPermission(true)
+      try {
+        const hasPermission = await checkStreamingPermission(user.id)
+        setHasStreamingPermission(hasPermission)
+      } catch (error) {
+        console.error('Error checking streaming permission:', error)
+        setHasStreamingPermission(false)
+      } finally {
+        setIsCheckingPermission(false)
+      }
+    }
+    
+    if (showEventModal) {
+      checkPermission()
+    }
+  }, [showEventModal, user?.id, user?.role, checkStreamingPermission])
   const videoContainerRef = useRef(null)
   const mediaRecorderRef = useRef(null)
   const chunkIntervalRef = useRef(null)
@@ -776,38 +813,42 @@ function VideoRecorder() {
       const g = organization?.games?.find(x => x.id === eventExistingGameId)
       setEventSummary(g ? computeEventLabelFromGame(g) : 'Game selected')
       
-      // Create stream for this game
+      // Create stream for this game only if streaming is enabled
       let streamData = null
       
-      try {
-        console.log('🔄 Creating stream for game:', eventExistingGameId)
+      if (enableLiveStreaming && hasStreamingPermission) {
+        try {
+          console.log('🔄 Creating stream for game:', eventExistingGameId)
+          
+          // Use createStream from OrgContext (Now Cloudflare-powered)
+          if (createStream) {
+            streamData = await createStream(eventExistingGameId)
+            console.log('✅ Stream created:', streamData)
+          } else {
+            console.warn('⚠️ createStream function not available')
+            setError('Streaming unavailable. Recording will still work.')
+          }
+        } catch (err) {
+          console.error('❌ Error creating stream:', err)
+          setError(`Stream creation failed: ${err.message}. You can still record locally.`)
+        }
         
-        // Use createStream from OrgContext (Now Cloudflare-powered)
-        if (createStream) {
-          streamData = await createStream(eventExistingGameId)
-          console.log('✅ Stream created:', streamData)
+        // Set stream data if we have it
+        if (streamData?.id) {
+          setStreamId(streamData.id)
+          // ALWAYS use the app viewer URL, never the raw Cloudflare URL
+          const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+          setStreamUrl(appViewerUrl)
+          // Store WHIP info for broadcasting
+          if (streamData.whipUrl) {
+             whipUrlRef.current = streamData.whipUrl
+          }
+          console.log('✅ Stream setup complete:', streamData.id)
         } else {
-          console.warn('⚠️ createStream function not available')
-          setError('Streaming unavailable. Recording will still work.')
+          console.warn('⚠️ Stream created but no ID returned')
         }
-      } catch (err) {
-        console.error('❌ Error creating stream:', err)
-        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
-      }
-      
-      // Set stream data if we have it
-      if (streamData?.id) {
-        setStreamId(streamData.id)
-        // ALWAYS use the app viewer URL, never the raw Cloudflare URL
-        const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
-        setStreamUrl(appViewerUrl)
-        // Store WHIP info for broadcasting
-        if (streamData.whipUrl) {
-           whipUrlRef.current = streamData.whipUrl
-        }
-        console.log('✅ Stream setup complete:', streamData.id)
       } else {
-        console.warn('⚠️ Stream created but no ID returned')
+        console.log('ℹ️ Live streaming not enabled for this recording')
       }
       
       console.log('✅ Existing game selected, gameId set:', eventExistingGameId)
@@ -1022,23 +1063,27 @@ function VideoRecorder() {
       currentGameIdRef.current = created.id
       setEventSummary(`${eventType === 'game' ? 'Game' : eventType === 'practice' ? 'Practice' : 'Skills'} — ${created.gameDate} ${created.gameTime || ''}`.trim())
       
-      // Create stream for this game
+      // Create stream for this game only if streaming is enabled
       let streamData = null
       
-      try {
-        console.log('🔄 Creating stream for new game:', created.id)
-        
-        // Use createStream from OrgContext (Now Cloudflare-powered)
-        if (createStream) {
-          streamData = await createStream(created.id)
-          console.log('✅ Stream created:', streamData)
-        } else {
-          console.warn('⚠️ createStream function not available')
-          setError('Streaming unavailable. Recording will still work.')
+      if (enableLiveStreaming && hasStreamingPermission) {
+        try {
+          console.log('🔄 Creating stream for new game:', created.id)
+          
+          // Use createStream from OrgContext (Now Cloudflare-powered)
+          if (createStream) {
+            streamData = await createStream(created.id)
+            console.log('✅ Stream created:', streamData)
+          } else {
+            console.warn('⚠️ createStream function not available')
+            setError('Streaming unavailable. Recording will still work.')
+          }
+        } catch (err) {
+          console.error('❌ Error creating stream:', err)
+          setError(`Stream creation failed: ${err.message}. You can still record locally.`)
         }
-      } catch (err) {
-        console.error('❌ Error creating stream:', err)
-        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
+      } else {
+        console.log('ℹ️ Live streaming not enabled for this recording')
       }
       
       // Set stream data if we have it
@@ -1240,9 +1285,9 @@ function VideoRecorder() {
 
     if (streamId && reactivateStream) {
       // Logic for existing stream...
-    } else if (createStream && (currentGameIdRef.current || selectedGameId)) {
+    } else if (enableLiveStreaming && hasStreamingPermission && createStream && (currentGameIdRef.current || selectedGameId)) {
         // Create NEW Stream if not exists or if we need a new input
-        // Only if we don't have a whip URL yet
+        // Only if we don't have a whip URL yet and streaming is enabled
         if (!whipUrlToUse) {
           try {
              const gameId = currentGameIdRef.current || selectedGameId
@@ -1603,11 +1648,16 @@ function VideoRecorder() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto">
-        {!isRecording && (
-          <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6 lg:mb-8 text-center">Video Recorder</h1>
-        )}
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
+      <div className="flex-shrink-0 p-4 sm:p-6 lg:p-8 pb-2 sm:pb-4">
+        <div className="max-w-7xl mx-auto">
+          {!isRecording && (
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-center">Video Recorder</h1>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-2 sm:pt-4">
 
         {/* Event Setup Modal */}
         {showEventModal && !isRecording && (
@@ -1630,7 +1680,132 @@ function VideoRecorder() {
               </div>
 
               <div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {(() => {
+                  // Get today's date in local timezone
+                  const today = new Date()
+                  const todayYear = today.getFullYear()
+                  const todayMonth = today.getMonth()
+                  const todayDate = today.getDate()
+                  
+                  // Get all events (games, practices, skills) for today
+                  const allEvents = organization?.games || []
+                  const todayEvents = allEvents.filter(event => {
+                    if (!event.gameDate) return false
+                    const eventDateParts = event.gameDate.split('-')
+                    if (eventDateParts.length === 3) {
+                      const eventYear = parseInt(eventDateParts[0], 10)
+                      const eventMonth = parseInt(eventDateParts[1], 10) - 1
+                      const eventDay = parseInt(eventDateParts[2], 10)
+                      return eventYear === todayYear && eventMonth === todayMonth && eventDay === todayDate
+                    }
+                    return false
+                  })
+                  
+                  // Format time helper for display
+                  const formatTimeForDisplay = (timeString) => {
+                    if (!timeString) return ''
+                    try {
+                      const [hours, minutes] = timeString.split(':')
+                      const hour = parseInt(hours)
+                      const ampm = hour >= 12 ? 'PM' : 'AM'
+                      const displayHour = hour % 12 || 12
+                      return `${displayHour}:${minutes} ${ampm}`
+                    } catch {
+                      return timeString
+                    }
+                  }
+                  
+                  // Format event label
+                  const formatEventLabel = (event) => {
+                    const team = organization?.teams?.find(t => t.id === event.teamId)
+                    const season = organization?.seasons?.find(s => s.id === event.seasonId)
+                    const time = event.gameTime ? formatTimeForDisplay(event.gameTime) : ''
+                    const typeLabel = event.eventType === 'game' ? 'Game' : event.eventType === 'practice' ? 'Practice' : 'Skills'
+                    const opponent = event.opponent ? ` vs ${event.opponent}` : ''
+                    return `${typeLabel}${opponent} - ${team?.name || 'Unknown'}${time ? ` @ ${time}` : ''}`
+                  }
+                  
+                  return (
+                    <>
+                      {/* Today's Events List */}
+                      {todayEvents.length > 0 && (
+                        <div className="space-y-2">
+                          <label className="block text-gray-300 mb-2 text-sm font-semibold">Today's Events</label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto scrollable-container">
+                            {todayEvents.map(event => {
+                              const team = organization?.teams?.find(t => t.id === event.teamId)
+                              const season = organization?.seasons?.find(s => s.id === event.seasonId)
+                              const isGame = event.eventType === 'game'
+                              const isPractice = event.eventType === 'practice'
+                              const isSkills = event.eventType === 'skills'
+                              
+                              return (
+                                <button
+                                  key={event.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setEventType(event.eventType || 'game')
+                                    if (isGame) {
+                                      setEventExistingGameId(event.id)
+                                      setEventUseManualGame(false)
+                                      setEventTeamId(event.teamId)
+                                      setEventSeasonId(event.seasonId)
+                                    } else {
+                                      setEventTeamId(event.teamId)
+                                      setEventSeasonId(event.seasonId)
+                                      setEventDate(event.gameDate)
+                                      setEventTime(event.gameTime || '')
+                                      setEventLocation(event.location || '')
+                                      setEventNotes(event.notes || '')
+                                    }
+                                  }}
+                                  className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                                    (isGame && eventExistingGameId === event.id) || 
+                                    (!isGame && eventTeamId === event.teamId && eventSeasonId === event.seasonId && eventDate === event.gameDate)
+                                      ? 'border-blue-500 bg-blue-900 bg-opacity-30'
+                                      : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className={`flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0 ${
+                                      isGame 
+                                        ? 'bg-blue-900 bg-opacity-30'
+                                        : isPractice
+                                        ? 'bg-purple-900 bg-opacity-30'
+                                        : 'bg-emerald-900 bg-opacity-30'
+                                    }`}>
+                                      {isGame ? (
+                                        <Calendar className="w-5 h-5 text-blue-400" />
+                                      ) : isPractice ? (
+                                        <Dumbbell className="w-5 h-5 text-purple-400" />
+                                      ) : (
+                                        <Sparkles className="w-5 h-5 text-emerald-400" />
+                                      )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-semibold text-white truncate">
+                                        {formatEventLabel(event)}
+                                      </div>
+                                      {team && season && (
+                                        <div className="text-xs text-gray-400 truncate">
+                                          {team.name} • {season.name}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="pt-2 border-t border-gray-800">
+                            <p className="text-xs text-gray-400 text-center">Or select an event type below</p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Event Type Selector - only show if no event type selected or no today's events */}
+                      {(!eventType || todayEvents.length === 0) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     type="button"
                     onClick={() => { setEventType('game'); setEventUseManualGame(false); setError(null) }}
@@ -1678,7 +1853,34 @@ function VideoRecorder() {
                     </div>
                     <p className="text-xs text-gray-400">Record skills/drills outside a game.</p>
                   </button>
-                </div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+
+                {/* Streaming Toggle - Show when user has permission and event type is selected */}
+                {hasStreamingPermission && eventType && (
+                  <div className="border-t border-gray-800 pt-4">
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={enableLiveStreaming}
+                        onChange={(e) => setEnableLiveStreaming(e.target.checked)}
+                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                        id="enable-streaming"
+                      />
+                      <div className="flex-1">
+                        <label htmlFor="enable-streaming" className="text-white cursor-pointer">
+                          Enable Live Streaming
+                        </label>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Stream this recording live. Viewers can watch in real-time at the provided URL.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {eventType === 'game' && (() => {
                   const games = organization?.games || []
@@ -2101,14 +2303,14 @@ function VideoRecorder() {
           </div>
         )}
 
-        <div>
+        <div className="flex flex-col h-full min-h-0">
           {/* Video Preview Section */}
-          <div>
+          <div className="flex-1 flex flex-col min-h-0">
             <div 
               ref={videoContainerRef}
-              className={`bg-gray-800 rounded-lg ${isRecording ? 'p-0' : 'p-4 sm:p-6'} shadow-xl relative ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
+              className={`bg-gray-800 rounded-lg ${isRecording ? 'p-0' : 'p-2 sm:p-4'} shadow-xl relative flex-1 flex flex-col min-h-0 ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
             >
-              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden aspect-video'} ${!isRecording && 'mb-4 sm:mb-6'}`}>
+              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden flex-1 min-h-0'}`}>
                 <video
                   ref={videoRef}
                   autoPlay
@@ -2198,9 +2400,9 @@ function VideoRecorder() {
 
               {/* Start Recording Button and Controls - Only visible when not recording */}
               {!isRecording && (
-                <>
+                <div className="flex-shrink-0 space-y-2 sm:space-y-3 mt-2 sm:mt-4">
                   {/* Event Summary */}
-                  <div className="mb-4 bg-gray-800 border border-gray-700 rounded-lg p-3">
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-2 sm:p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs text-gray-400">Selected event</p>
@@ -2225,7 +2427,7 @@ function VideoRecorder() {
 
                   {/* Resume Recording Button - Show if there's a recently stopped stream */}
                   {recentlyStoppedStream && selectedGameId && (
-                    <div className="mb-4 bg-blue-900/30 border border-blue-700 rounded-lg p-4">
+                    <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 sm:p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1">
                           <p className="text-sm font-semibold text-blue-300 mb-1">Resume Previous Recording</p>
@@ -2246,7 +2448,7 @@ function VideoRecorder() {
 
                   {/* Event selection reminder - Start Recording button removed (now in modal) */}
                   {!selectedGameId && (
-                    <div className="flex justify-center mb-4">
+                    <div className="flex justify-center">
                     <button
                         onClick={() => setShowEventModal(true)}
                         className="flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm sm:text-base"
@@ -2321,7 +2523,7 @@ function VideoRecorder() {
                       </button>
                     </div>
                   )}
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -2432,6 +2634,7 @@ function VideoRecorder() {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
