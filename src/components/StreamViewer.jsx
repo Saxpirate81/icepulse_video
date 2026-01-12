@@ -489,6 +489,7 @@ function StreamViewer({ streamId }) {
           controlsList="nodownload"
           preload="auto"
           crossOrigin="anonymous"
+          style={{ transform: 'scaleX(-1)' }}
         />
         
         {/* Waiting / Offline Overlay */}

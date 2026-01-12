@@ -213,6 +213,7 @@ function SynchronizedVideoPlayer({ videos, game }) {
                   preload="metadata"
                   controls
                   crossOrigin="anonymous"
+                  style={{ transform: 'scaleX(-1)' }}
                 />
                 
                 {/* Overlay with Game Date/Time and Username */}
