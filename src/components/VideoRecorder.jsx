@@ -817,35 +817,35 @@ function VideoRecorder() {
       let streamData = null
       
       if (enableLiveStreaming && hasStreamingPermission) {
-        try {
-          console.log('🔄 Creating stream for game:', eventExistingGameId)
-          
-          // Use createStream from OrgContext (Now Cloudflare-powered)
-          if (createStream) {
-            streamData = await createStream(eventExistingGameId)
-            console.log('✅ Stream created:', streamData)
-          } else {
-            console.warn('⚠️ createStream function not available')
-            setError('Streaming unavailable. Recording will still work.')
-          }
-        } catch (err) {
-          console.error('❌ Error creating stream:', err)
-          setError(`Stream creation failed: ${err.message}. You can still record locally.`)
-        }
+      try {
+        console.log('🔄 Creating stream for game:', eventExistingGameId)
         
-        // Set stream data if we have it
-        if (streamData?.id) {
-          setStreamId(streamData.id)
+        // Use createStream from OrgContext (Now Cloudflare-powered)
+        if (createStream) {
+          streamData = await createStream(eventExistingGameId)
+          console.log('✅ Stream created:', streamData)
+        } else {
+          console.warn('⚠️ createStream function not available')
+          setError('Streaming unavailable. Recording will still work.')
+        }
+      } catch (err) {
+        console.error('❌ Error creating stream:', err)
+        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
+      }
+      
+      // Set stream data if we have it
+      if (streamData?.id) {
+        setStreamId(streamData.id)
           // ALWAYS use the app viewer URL, never the raw Cloudflare URL
           const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
           setStreamUrl(appViewerUrl)
-          // Store WHIP info for broadcasting
-          if (streamData.whipUrl) {
-             whipUrlRef.current = streamData.whipUrl
-          }
-          console.log('✅ Stream setup complete:', streamData.id)
-        } else {
-          console.warn('⚠️ Stream created but no ID returned')
+        // Store WHIP info for broadcasting
+        if (streamData.whipUrl) {
+           whipUrlRef.current = streamData.whipUrl
+        }
+        console.log('✅ Stream setup complete:', streamData.id)
+      } else {
+        console.warn('⚠️ Stream created but no ID returned')
         }
       } else {
         console.log('ℹ️ Live streaming not enabled for this recording')
@@ -1067,20 +1067,20 @@ function VideoRecorder() {
       let streamData = null
       
       if (enableLiveStreaming && hasStreamingPermission) {
-        try {
-          console.log('🔄 Creating stream for new game:', created.id)
-          
-          // Use createStream from OrgContext (Now Cloudflare-powered)
-          if (createStream) {
-            streamData = await createStream(created.id)
-            console.log('✅ Stream created:', streamData)
-          } else {
-            console.warn('⚠️ createStream function not available')
-            setError('Streaming unavailable. Recording will still work.')
-          }
-        } catch (err) {
-          console.error('❌ Error creating stream:', err)
-          setError(`Stream creation failed: ${err.message}. You can still record locally.`)
+      try {
+        console.log('🔄 Creating stream for new game:', created.id)
+        
+        // Use createStream from OrgContext (Now Cloudflare-powered)
+        if (createStream) {
+          streamData = await createStream(created.id)
+          console.log('✅ Stream created:', streamData)
+        } else {
+          console.warn('⚠️ createStream function not available')
+          setError('Streaming unavailable. Recording will still work.')
+        }
+      } catch (err) {
+        console.error('❌ Error creating stream:', err)
+        setError(`Stream creation failed: ${err.message}. You can still record locally.`)
         }
       } else {
         console.log('ℹ️ Live streaming not enabled for this recording')
@@ -1099,8 +1099,8 @@ function VideoRecorder() {
       
       console.log('✅ Event created and gameId set:', created.id)
       
-      // Close the modal after successful event creation
-      setShowEventModal(false)
+      // Don't close modal - let user see stream URL and start recording
+      // Modal will stay open so user can copy/share the stream URL and start recording
       
       return true
     } catch (e) {
@@ -1653,15 +1653,8 @@ function VideoRecorder() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
-      <div className="flex-shrink-0 p-4 sm:p-6 lg:p-8 pb-2 sm:pb-4">
-        <div className="max-w-7xl mx-auto">
-          {!isRecording && (
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-center">Video Recorder</h1>
-          )}
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-2 sm:pt-4">
+      <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-3 sm:p-4 lg:p-6">
+        <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col min-h-0 gap-4">
 
         {/* Event Setup Modal */}
         {showEventModal && !isRecording && (
@@ -1809,7 +1802,7 @@ function VideoRecorder() {
                       
                       {/* Event Type Selector - only show if no event type selected or no today's events */}
                       {(!eventType || todayEvents.length === 0) && (
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     type="button"
                     onClick={() => { setEventType('game'); setEventUseManualGame(false); setError(null) }}
@@ -1857,7 +1850,7 @@ function VideoRecorder() {
                     </div>
                     <p className="text-xs text-gray-400">Record skills/drills outside a game.</p>
                   </button>
-                        </div>
+                </div>
                       )}
                     </>
                   )
@@ -2186,12 +2179,16 @@ function VideoRecorder() {
                   </div>
                 )}
 
-                {/* Stream URL Section */}
-                {streamUrl && (
-                  <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border border-blue-700/50 rounded-lg p-4 space-y-3">
+                {/* Stream URL Section - Show after event is saved and stream is created - Positioned prominently */}
+                {streamUrl && selectedGameId && (
+                  <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border-2 border-blue-500/50 rounded-lg p-4 space-y-3">
                     <div>
-                      <label className="block text-blue-300 font-semibold mb-2 text-sm">
-                        🔴 Live Stream URL
+                      <label className="block text-blue-300 font-semibold mb-2 text-sm flex items-center gap-2">
+                        <span className="relative flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                        </span>
+                        Live Stream URL
                       </label>
                       <div className="flex gap-2">
                         <input
@@ -2224,12 +2221,12 @@ function VideoRecorder() {
                         </button>
                         <button
                           onClick={() => {
-                            const message = `Watch the live stream: ${window.location.origin}/stream/${streamId || stream?.id}`
+                            const message = `Watch the live stream: ${streamUrl}`
                             if (navigator.share) {
                               navigator.share({
                                 title: 'Live Stream',
                                 text: message,
-                                url: `${window.location.origin}/stream/${streamId || stream?.id}`
+                                url: streamUrl
                               }).catch(() => {
                                 // Fallback to SMS
                                 window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
@@ -2270,31 +2267,30 @@ function VideoRecorder() {
                   >
                   Cancel
                   </button>
-                {streamUrl ? (
-                  // If stream URL exists, show "Start Recording" button
+                {selectedGameId ? (
+                  // If event is selected, show red "Record" button that immediately starts recording
                     <button
                     onClick={() => {
                       setShowEventModal(false)
-                      // Auto-start recording after closing modal
+                      // Immediately start recording after closing modal
                       if (stream && !isRecording) {
                         setTimeout(() => {
                           startRecording()
                         }, 100)
                       }
                     }}
-                    disabled={!stream}
-                    className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+                    disabled={!stream || !selectedGameId}
+                    className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
                   >
-                    Start Recording
+                    {streamUrl ? '🔴 Record & Stream' : '🔴 Record'}
                     </button>
                 ) : (
-                  // If no stream URL yet, show "Save" button that creates event (and stream if enabled)
+                  // If no event selected yet, show "Save" button that creates event (and stream if enabled)
                     <button
                     onClick={async () => {
                       const success = await ensureEventSelected()
                       if (success) {
-                        // Modal will be closed by ensureEventSelected if successful
-                        // If streaming is enabled and stream was created, the button will change to "Start Recording"
+                        // Modal stays open - stream URL will appear and button will change to "Record"
                       }
                     }}
                     disabled={isCreatingEvent}
@@ -2308,12 +2304,13 @@ function VideoRecorder() {
           </div>
         )}
 
-        <div className="flex flex-col h-full min-h-0">
-          {/* Video Preview Section */}
-          <div className="flex-1 flex flex-col min-h-0">
+        {/* Main Layout: Video on top, Controls below (desktop) or stacked (mobile) */}
+        <div className="flex flex-col flex-1 min-h-0 gap-4">
+          {/* Video Preview Section - Full width, takes most space */}
+          <div className="flex-[3] flex flex-col min-h-0">
             <div 
               ref={videoContainerRef}
-              className={`bg-gray-800 rounded-lg ${isRecording ? 'p-0' : 'p-2 sm:p-4'} shadow-xl relative flex-1 flex flex-col min-h-0 ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
+              className={`bg-gray-800 rounded-xl ${isRecording ? 'p-0' : 'p-2'} shadow-2xl relative flex-1 flex flex-col min-h-0 ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
             >
               <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden flex-1 min-h-0'}`}>
                 <video
@@ -2402,91 +2399,139 @@ function VideoRecorder() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
 
-              {/* Start Recording Button and Controls - Only visible when not recording */}
+          {/* Controls Section - Centered below video */}
               {!isRecording && (
-                <div className="flex-shrink-0 space-y-2 sm:space-y-3 mt-2 sm:mt-4">
-                  {/* Event Summary */}
-                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-2 sm:p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-400">Selected event</p>
-                        <p className="text-sm text-white font-medium truncate">
+            <div className="flex-[1] flex flex-col items-center gap-4 min-h-0">
+              <div className="w-full max-w-2xl flex flex-col gap-4">
+                {/* Event Summary Card */}
+                <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
+                  <div className="flex flex-col items-center gap-3 mb-2">
+                    <div className="w-full text-center">
+                      <p className="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">Selected Event</p>
+                      <p className="text-base text-white font-semibold">
                           {eventSummary || (selectedGameId ? 'Event selected' : 'No event selected')}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowEventModal(true)}
-                        className="px-3 py-2 text-sm rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-700"
+                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700/50 hover:border-gray-500 transition-colors"
                       >
                         Change
                       </button>
                     </div>
                     {!selectedGameId && (
-                      <p className="text-xs text-gray-500 mt-2">
-                        Choose Game, Practice, or Skills before recording so the clip is categorized correctly.
+                    <p className="text-xs text-gray-500 mt-2 leading-relaxed text-center">
+                      Choose an event before recording to categorize your clip correctly.
                       </p>
                     )}
                   </div>
 
-                  {/* Resume Recording Button - Show if there's a recently stopped stream */}
-                  {recentlyStoppedStream && selectedGameId && (
-                    <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 sm:p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-blue-300 mb-1">Resume Previous Recording</p>
-                          <p className="text-xs text-gray-400">
-                            You stopped recording recently. You can resume to the same stream link.
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => startRecording(recentlyStoppedStream.id)}
-                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm"
-                        >
-                          <Video className="w-4 h-4" />
-                          <span>Resume Recording</span>
-                        </button>
+                {/* Stream URL Card - Only show when streaming */}
+                {streamUrl && (
+                  <div className="bg-gradient-to-br from-blue-900/40 via-purple-900/30 to-blue-900/40 backdrop-blur-sm border border-blue-500/30 rounded-xl p-4 shadow-lg">
+                    <div className="flex items-center justify-center gap-2 mb-3">
+                      <div className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
                       </div>
+                      <label className="text-blue-300 font-semibold text-sm">Live Stream URL</label>
                     </div>
-                  )}
-
-                  {/* Event selection reminder - Start Recording button removed (now in modal) */}
-                  {!selectedGameId && (
-                    <div className="flex justify-center">
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={streamUrl}
+                        readOnly
+                        className="flex-1 bg-gray-900/80 text-white px-3 py-2 rounded-lg border border-gray-700/50 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        onClick={(e) => e.target.select()}
+                      />
                     <button
-                        onClick={() => setShowEventModal(true)}
-                        className="flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm sm:text-base"
-                    >
-                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
-                        <span>Select Event to Record</span>
+                        onClick={() => {
+                          navigator.clipboard.writeText(streamUrl)
+                          setUrlCopied(true)
+                          setTimeout(() => setUrlCopied(false), 2000)
+                        }}
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0 text-sm shadow-md"
+                        title="Copy URL"
+                      >
+                        {urlCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                        <span className="hidden sm:inline">{urlCopied ? 'Copied!' : 'Copy'}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const message = `Watch the live stream: ${streamUrl}`
+                          if (navigator.share) {
+                            navigator.share({
+                              title: 'Live Stream',
+                              text: message,
+                              url: streamUrl
+                            }).catch(() => {
+                              window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
+                            })
+                          } else {
+                            window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
+                          }
+                        }}
+                        className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0 text-sm shadow-md"
+                        title="Share Stream"
+                      >
+                        <Share2 className="w-4 h-4" />
+                        <span className="hidden sm:inline">Share</span>
                     </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2 leading-relaxed text-center">
+                      Share this URL with viewers - no login required!
+                    </p>
                   </div>
                   )}
+              </div>
 
-                  {/* Camera and Audio Controls - Side by Side */}
+              {/* Camera, Audio, and Recording Controls - Centered */}
+              <div className="w-full max-w-2xl flex flex-col gap-3">
+                {/* Resume Recording Card */}
+                {recentlyStoppedStream && selectedGameId && (
+                  <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-4 shadow-lg">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-blue-300 mb-1">Resume Previous Recording</p>
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                          Continue recording to the same stream link.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => startRecording(recentlyStoppedStream.id)}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors text-sm shadow-md flex-shrink-0"
+                      >
+                        <Video className="w-4 h-4" />
+                        <span>Resume</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Camera & Audio Controls Card */}
                   {stream && (
-                    <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-center">
+                  <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
+                    <p className="text-xs text-gray-400 mb-3 font-medium uppercase tracking-wide text-center">Settings</p>
+                    <div className="flex flex-col gap-3">
                       {/* Camera Controls */}
-                      <div className="flex items-center gap-2">
-                        {/* Flip Camera Button (Mobile) or Camera Dropdown (Desktop) */}
-                        {isMobile && cameras.length > 1 ? (
+                      {cameras.length > 1 && (
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-2 text-center">Camera</label>
+                          {isMobile ? (
                           <button
                             onClick={flipCamera}
                             disabled={isRecording}
-                            className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors text-sm sm:text-base"
+                              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm"
                             title={facingMode === 'environment' ? 'Currently: Back Camera - Click to switch to Front' : 'Currently: Front Camera - Click to switch to Back'}
                           >
-                            <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-                            <span className="hidden sm:inline">
-                              Switch to {facingMode === 'environment' ? 'Front' : 'Back'}
-                            </span>
-                            <span className="sm:hidden">
-                              {facingMode === 'environment' ? 'Front' : 'Back'}
-                            </span>
+                              <RotateCcw className="w-4 h-4" />
+                              <span>Switch to {facingMode === 'environment' ? 'Front' : 'Back'}</span>
                           </button>
-                        ) : cameras.length > 1 ? (
-                        <div className="flex-1 max-w-xs w-full sm:w-auto">
+                          ) : (
                           <Dropdown
                             options={cameras.map((camera) => ({
                               value: camera.deviceId,
@@ -2498,40 +2543,65 @@ function VideoRecorder() {
                             multiple={false}
                             showAllOption={false}
                             disabled={isRecording}
-                            icon={<Camera className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 flex-shrink-0" />}
+                              icon={<Camera className="w-4 h-4 text-gray-400 flex-shrink-0" />}
                           />
+                          )}
                         </div>
-                        ) : null}
-                      </div>
+                      )}
 
                       {/* Audio Toggle */}
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-2 text-center">Audio</label>
                       <button
                         onClick={toggleAudio}
-                        className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors text-sm sm:text-base ${
+                          className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-colors text-sm shadow-md ${
                           audioEnabled
                             ? 'bg-green-600 hover:bg-green-700 text-white'
                             : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                        } ${cameras.length > 1 ? '' : 'w-full sm:w-auto'}`}
+                          }`}
                         title={audioEnabled ? 'Disable audio recording' : 'Enable audio recording'}
                       >
                         {audioEnabled ? (
                           <>
-                            <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                              <Mic className="w-4 h-4" />
                             <span>Audio On</span>
                           </>
                         ) : (
                           <>
-                            <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                              <MicOff className="w-4 h-4" />
                             <span>Audio Off</span>
                           </>
                         )}
                       </button>
                     </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
+                )}
+
+                {/* Event Selection Prompt */}
+                {!selectedGameId && (
+                  <button
+                    onClick={() => setShowEventModal(true)}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold transition-colors text-sm shadow-lg"
+                  >
+                    <Calendar className="w-5 h-5" />
+                    <span>Select Event to Record</span>
+                  </button>
+                )}
+
+                {/* Start Recording Button - Large, prominent */}
+                {selectedGameId && stream && !isRecording && (
+                  <button
+                    onClick={() => startRecording()}
+                    className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-xl font-bold text-base sm:text-lg transition-all shadow-xl transform hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    <Video className="w-5 h-5 sm:w-6 sm:h-6" />
+                    <span>Start Recording{streamUrl ? ' & Streaming' : ''}</span>
+                  </button>
+                )}
+                  </div>
+                </div>
+              )}
         </div>
       </div>
 

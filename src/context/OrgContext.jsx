@@ -1926,35 +1926,34 @@ export function OrgProvider({ children }) {
         }
       }
 
-      // THIRD: Check for any recently stopped stream for this game (within 5 minutes)
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-      const { data: recentlyStoppedStream } = await supabase
+      // THIRD: Check for ANY inactive stream for this game (reuse same URL indefinitely)
+      // This allows the same stream URL to be reused for the same game/event
+      const { data: inactiveStream } = await supabase
         .from('icepulse_streams')
         .select('*')
         .eq('game_id', gameId)
         .eq('is_active', false)
         .eq('created_by', user.id) // Only resume streams created by the same user
-        .gte('updated_at', fiveMinutesAgo)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle()
 
-      if (recentlyStoppedStream) {
-        // Reactivate the recently stopped stream
+      if (inactiveStream) {
+        // Reactivate the inactive stream (reuse the same URL)
         const { error: updateError } = await supabase
           .from('icepulse_streams')
           .update({ is_active: true })
-          .eq('id', recentlyStoppedStream.id)
+          .eq('id', inactiveStream.id)
 
         if (!updateError) {
-          console.log('✅ [Cloudflare] Resumed recently stopped stream:', recentlyStoppedStream.id)
+          console.log('✅ [Cloudflare] Reusing existing stream URL:', inactiveStream.id)
           return {
-            id: recentlyStoppedStream.id,
-            liveInputId: recentlyStoppedStream.cloudflare_live_input_id,
-            streamUrl: recentlyStoppedStream.cloudflare_playback_url,
-            whipUrl: recentlyStoppedStream.cloudflare_whip_url,
-            rtmpsUrl: recentlyStoppedStream.rtmps_url || '',
-            rtmpsKey: recentlyStoppedStream.cloudflare_stream_key || ''
+            id: inactiveStream.id,
+            liveInputId: inactiveStream.cloudflare_live_input_id,
+            streamUrl: inactiveStream.cloudflare_playback_url,
+            whipUrl: inactiveStream.cloudflare_whip_url,
+            rtmpsUrl: inactiveStream.rtmps_url || '',
+            rtmpsKey: inactiveStream.cloudflare_stream_key || ''
           }
         }
       }

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { Wifi, WifiOff, Play } from 'lucide-react'
 import Hls from 'hls.js'
 
-function StreamViewer({ streamId }) {
+function StreamViewer({ streamId, isPreview = false }) {
   const [isLive, setIsLive] = useState(false)
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
@@ -22,7 +22,7 @@ function StreamViewer({ streamId }) {
             *,
             icepulse_games (
               *,
-              icepulse_teams (name, logo_url),
+              icepulse_teams (name),
               icepulse_organizations (name, header_image_url)
             )
           `)
@@ -101,8 +101,10 @@ function StreamViewer({ streamId }) {
 
   const pollingStartedRef = useRef(null)
 
-  // Initialize HLS Player
+  // Initialize HLS Player (skip for preview mode)
   useEffect(() => {
+    if (isPreview) return // Skip setup for preview mode
+    
     let cancelled = false
     
     const currentPlaybackUrl = streamInfo?.cloudflare_playback_url
@@ -158,21 +160,22 @@ function StreamViewer({ streamId }) {
         })
         
         if (!response.ok) {
-          // 409 means stream is not ready yet (not active or not receiving data)
-          // Don't show error, just set waiting state
+          // 409 means stream is not ready yet (no publisher connected or not receiving data)
+          // Don't show error, just set waiting state and retry
           if (response.status === 409) {
-            console.log('⏳ [VIEWER] Stream not ready yet (409), will retry...')
+            console.log(`⏳ [VIEWER] Stream not ready yet (409) - no publisher connected. Retry ${retryCount + 1}/30...`)
             setIsLive(false)
             setError(null) // Clear any previous errors
-            // Retry after a delay (max 20 retries = 100 seconds to allow more time for stream to start)
-            if (retryCount < 20 && !cancelled) {
+            // Retry with exponential backoff: 2s, 3s, 5s, then 5s intervals (max 30 retries = ~2.5 minutes)
+            const delay = retryCount < 3 ? [2000, 3000, 5000][retryCount] : 5000
+            if (retryCount < 30 && !cancelled) {
               setTimeout(() => {
                 if (videoElement && !cancelled) {
                   setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
                 }
-              }, 5000)
-            } else if (retryCount >= 20) {
-              console.log('⏳ [VIEWER] Max retries reached, stream may not be broadcasting yet')
+              }, delay)
+            } else if (retryCount >= 30) {
+              console.log('⏳ [VIEWER] Max retries reached (30), stream may not be broadcasting yet. Waiting for broadcaster to start...')
             }
             return
           }
@@ -274,24 +277,26 @@ function StreamViewer({ streamId }) {
                 hlsPlaybackUrl: hlsPlaybackUrl
               })
               
-              // For LIVE streams: Use WebRTC playback (HLS not available during live)
-              // For VOD streams: Use HLS playback
-              const isLive = streamStatus === 'connected' || streamInfo?.is_active
+              // Check if stream has an active publisher (someone is broadcasting)
+              // Cloudflare status can be: 'connected' (publisher connected), 'disconnected', or null (no publisher yet)
+              const hasActivePublisher = streamStatus === 'connected'
               
-              if (isLive && webRTCPlaybackUrl) {
-                // Use WebRTC for live streams
-                console.log('✅ [VIEWER] Stream is LIVE - Using WebRTC playback:', webRTCPlaybackUrl)
+              // For LIVE streams: Always try WebRTC playback if URL is available (HLS not available during live)
+              // WebRTC will retry on 409 errors until publisher connects
+              // For VOD streams: Use HLS playback
+              if (webRTCPlaybackUrl) {
+                // Always try WebRTC for live streams (will retry on 409 if no publisher yet)
+                if (hasActivePublisher) {
+                  console.log('✅ [VIEWER] Stream has active publisher - Using WebRTC playback:', webRTCPlaybackUrl)
+                } else {
+                  console.log('⏳ [VIEWER] No active publisher yet, trying WebRTC (will retry on 409):', webRTCPlaybackUrl)
+                }
                 setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
                 return // Exit early, don't poll for HLS
-              } else if (!isLive && hlsPlaybackUrl) {
-                // Use HLS for VOD
+              } else if (hlsPlaybackUrl) {
+                // No WebRTC but HLS available - might be VOD
                 candidateUrls.unshift(hlsPlaybackUrl)
-                console.log('✅ [VIEWER] Stream is VOD - Using HLS playback:', hlsPlaybackUrl)
-              } else if (webRTCPlaybackUrl) {
-                // Fallback: try WebRTC even if status unclear
-                console.log('⚠️ [VIEWER] Status unclear, trying WebRTC playback:', webRTCPlaybackUrl)
-                setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
-                return
+                console.log('✅ [VIEWER] Using HLS playback (VOD):', hlsPlaybackUrl)
               } else {
                 console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', streamStatus)
               }
@@ -444,7 +449,7 @@ function StreamViewer({ streamId }) {
         videoRef.current.srcObject = null
       }
     }
-  }, [streamInfo?.cloudflare_playback_url])
+  }, [streamInfo?.cloudflare_playback_url, isPreview])
 
   // Don't show error screen - show waiting UI instead
   // Errors are handled gracefully with retries
@@ -496,33 +501,33 @@ function StreamViewer({ streamId }) {
         )}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Team Logo - positioned to left, height matches title + subtitle combined */}
-            {team?.logo_url && (
+            {/* Team Logo - Note: logo_url column needs to be added to icepulse_teams table first */}
+            {/* {team?.logo_url && (
               <img
                 src={team.logo_url}
                 alt={team.name || 'Team logo'}
                 className="object-contain flex-shrink-0"
                 style={{ 
-                  height: 'calc(1.5rem + 0.75rem + 0.125rem)', // Match height of title (text-lg = 1.5rem) + subtitle (text-xs = 0.75rem) + gap (0.125rem)
+                  height: 'calc(1.5rem + 0.75rem + 0.125rem)',
                   maxHeight: 'calc(1.5rem + 0.75rem + 0.125rem)',
                   width: 'auto'
                 }}
               />
-            )}
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
-                {team?.name || 'IcePulse Stream'}
-              </h1>
-              <div className="flex items-center gap-2 mt-0.5">
-                {organization?.name && (
-                  <span className="text-xs sm:text-sm text-gray-400 truncate">
-                    {organization.name}
-                  </span>
-                )}
-                {organization?.name && eventDisplay && <span className="text-gray-600">•</span>}
-                <span className="text-xs sm:text-sm text-gray-300 font-medium truncate">
-                  {eventType === 'game' ? eventDisplay : `• ${eventDisplay}`}
+            )} */}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
+              {team?.name || 'IcePulse Stream'}
+            </h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              {organization?.name && (
+                <span className="text-xs sm:text-sm text-gray-400 truncate">
+                  {organization.name}
                 </span>
+              )}
+                {organization?.name && eventDisplay && <span className="text-gray-600">•</span>}
+              <span className="text-xs sm:text-sm text-gray-300 font-medium truncate">
+                  {eventType === 'game' ? eventDisplay : `• ${eventDisplay}`}
+              </span>
               </div>
             </div>
           </div>
@@ -545,8 +550,8 @@ function StreamViewer({ streamId }) {
 
       {/* Video Player - Full Screen */}
       <div className="w-full h-screen bg-black flex items-center justify-center pt-16 sm:pt-20 relative">
-        {/* Video container - use CSS to flip only video content, not controls */}
-        <div className="w-full h-full relative video-mirror-container">
+        {/* Video container - flip video content but keep controls normal using wrapper approach */}
+        <div className="w-full h-full relative" style={{ transform: 'scaleX(-1)' }}>
         <video
           ref={videoRef}
           className="w-full h-full object-contain"
@@ -556,34 +561,8 @@ function StreamViewer({ streamId }) {
           controlsList="nodownload"
           preload="auto"
           crossOrigin="anonymous"
+            style={{ transform: 'scaleX(-1)' }} // Double flip: container flips everything, video flips back so controls are normal
         />
-          {/* CSS to flip video content but keep controls normal */}
-          <style>{`
-            .video-mirror-container video {
-              transform: scaleX(-1);
-            }
-            /* Attempt to reverse controls - may not work in all browsers */
-            .video-mirror-container video::-webkit-media-controls-panel {
-              transform: scaleX(-1);
-            }
-            .video-mirror-container video::-webkit-media-controls-play-button {
-              transform: scaleX(-1);
-            }
-            .video-mirror-container video::-webkit-media-controls-timeline {
-              transform: scaleX(-1);
-            }
-            .video-mirror-container video::-webkit-media-controls-current-time-display,
-            .video-mirror-container video::-webkit-media-controls-time-remaining-display {
-              transform: scaleX(-1);
-            }
-            .video-mirror-container video::-webkit-media-controls-mute-button,
-            .video-mirror-container video::-webkit-media-controls-volume-slider {
-              transform: scaleX(-1);
-            }
-            .video-mirror-container video::-webkit-media-controls-fullscreen-button {
-              transform: scaleX(-1);
-            }
-          `}</style>
         </div>
         
         {/* Waiting / Offline Overlay - Show when stream is not live */}

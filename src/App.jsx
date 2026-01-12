@@ -10,21 +10,51 @@ import UserSelector from './components/UserSelector'
 import OrganizationalDashboard from './components/OrganizationalDashboard'
 import IndividualDashboard from './components/IndividualDashboard'
 import StreamViewer from './components/StreamViewer'
+import MultiStreamViewer from './components/MultiStreamViewer'
 import { isTestingEnabled } from './utils/testing'
 
 function AppContent() {
   const { user, isLoading, showLogo } = useAuth()
   const [streamId, setStreamId] = useState(null)
+  const [organizationId, setOrganizationId] = useState(null)
+  const [viewMode, setViewMode] = useState(null) // 'single' | 'multi'
 
   // Check if we're on a streaming route (no auth required)
   // Do this immediately, before auth loading
   useEffect(() => {
     const checkStreamRoute = () => {
       const path = window.location.pathname
-      const match = path.match(/^\/stream\/([a-zA-Z0-9_-]+)$/)
-      if (match) {
-        setStreamId(match[1])
+      
+      // Check for multi-stream route: /streams or /org/[orgIdOrName]/streams
+      const multiMatch = path.match(/^\/org\/([a-zA-Z0-9_-]+)\/streams$/)
+      const allStreamsMatch = path.match(/^\/streams$/)
+      
+      if (multiMatch) {
+        setViewMode('multi')
+        // Could be UUID or organization name - MultiStreamViewer will resolve it
+        setOrganizationId(multiMatch[1])
+        setStreamId(null)
+        return
+      } else if (allStreamsMatch) {
+        setViewMode('multi')
+        setOrganizationId(null)
+        setStreamId(null)
+        return
       }
+      
+      // Check for single stream route: /stream/[streamId]
+      const singleMatch = path.match(/^\/stream\/([a-zA-Z0-9_-]+)$/)
+      if (singleMatch) {
+        setViewMode('single')
+        setStreamId(singleMatch[1])
+        setOrganizationId(null)
+        return
+      }
+      
+      // No stream route
+      setViewMode(null)
+      setStreamId(null)
+      setOrganizationId(null)
     }
     
     // Check immediately
@@ -38,8 +68,20 @@ function AppContent() {
     }
   }, [])
 
-  // If streaming route, show stream viewer (no auth required - bypass auth check)
-  if (streamId) {
+  // If multi-stream route, show multi-stream viewer (no auth required)
+  if (viewMode === 'multi') {
+    // Check if organizationId looks like a UUID or a name
+    const isUUID = organizationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId)
+    return (
+      <MultiStreamViewer 
+        organizationId={isUUID ? organizationId : null}
+        organizationName={!isUUID && organizationId ? organizationId : null}
+      />
+    )
+  }
+
+  // If single streaming route, show stream viewer (no auth required - bypass auth check)
+  if (viewMode === 'single' && streamId) {
     return <StreamViewer streamId={streamId} />
   }
 
