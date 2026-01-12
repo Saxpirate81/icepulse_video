@@ -111,6 +111,71 @@ function StreamViewer({ streamId }) {
     pollingStartedRef.current = currentPlaybackUrl
     console.log('🎬 [VIEWER] Starting setup for URL:', currentPlaybackUrl)
 
+    // Setup WebRTC playback for live streams (WHEP protocol)
+    const setupWebRTCPlayback = async (videoElement, playbackUrl) => {
+      try {
+        console.log('🎥 [VIEWER] Setting up WebRTC playback:', playbackUrl)
+        
+        // Create RTCPeerConnection for receiving
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        })
+        
+        // Handle incoming stream
+        pc.ontrack = (event) => {
+          console.log('✅ [VIEWER] Received WebRTC track:', event.track.kind)
+          if (event.track.kind === 'video' || event.track.kind === 'audio') {
+            videoElement.srcObject = event.streams[0]
+            videoElement.play().catch(e => console.warn('Autoplay failed:', e))
+            setIsLive(true)
+            setError(null)
+          }
+        }
+        
+        pc.oniceconnectionstatechange = () => {
+          console.log('🔌 [VIEWER] ICE connection state:', pc.iceConnectionState)
+          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            console.warn('⚠️ [VIEWER] WebRTC connection failed/disconnected')
+          }
+        }
+        
+        // Create offer
+        const offer = await pc.createOffer({
+          offerToReceiveVideo: true,
+          offerToReceiveAudio: true
+        })
+        await pc.setLocalDescription(offer)
+        
+        // Send offer to Cloudflare WHEP endpoint
+        const response = await fetch(playbackUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/sdp'
+          },
+          body: offer.sdp
+        })
+        
+        if (!response.ok) {
+          throw new Error(`WHEP request failed: ${response.status} ${response.statusText}`)
+        }
+        
+        const answerSdp = await response.text()
+        await pc.setRemoteDescription({
+          type: 'answer',
+          sdp: answerSdp
+        })
+        
+        console.log('✅ [VIEWER] WebRTC playback connection established')
+        
+        // Store PC reference for cleanup
+        videoElement._webrtcPc = pc
+        
+      } catch (error) {
+        console.error('❌ [VIEWER] WebRTC playback setup failed:', error)
+        setError(`Failed to connect to live stream: ${error.message}`)
+      }
+    }
+
     const setup = async () => {
       const video = videoRef.current
       if (!video) return
@@ -162,31 +227,40 @@ function StreamViewer({ streamId }) {
               
               // Log full details for debugging
               console.log('☁️ [VIEWER] Cloudflare Live Input Full Response:', JSON.stringify(liveInput, null, 2))
+              
+              const webRTCPlaybackUrl = liveInput.webRTCPlayback?.url
+              const hlsPlaybackUrl = liveInput.hlsPlayback?.url
+              const streamStatus = liveInput.status?.current?.state
+              
               console.log('☁️ [VIEWER] Cloudflare Live Input Status:', {
                 uid: liveInput.uid,
-                status: liveInput.status,
-                hasWebRTCPlayback: !!liveInput.webRTC?.playback?.url,
-                hasHLSPlayback: !!liveInput.hlsPlayback?.url,
-                webRTCPlaybackUrl: liveInput.webRTC?.playback?.url,
-                hlsPlaybackUrl: liveInput.hlsPlayback?.url,
-                // Check for other possible playback URL fields
-                playbackUrl: liveInput.playback?.url,
-                hls: liveInput.hls,
-                webRTC: liveInput.webRTC
+                status: streamStatus,
+                hasWebRTCPlayback: !!webRTCPlaybackUrl,
+                hasHLSPlayback: !!hlsPlaybackUrl,
+                webRTCPlaybackUrl: webRTCPlaybackUrl,
+                hlsPlaybackUrl: hlsPlaybackUrl
               })
               
-              // Try multiple possible playback URL locations
-              const apiPlaybackUrl = liveInput.webRTC?.playback?.url 
-                || liveInput.hlsPlayback?.url 
-                || liveInput.playback?.url
-                || (liveInput.hls?.playback?.url)
-                || (liveInput.webRTC?.playback?.hls)
+              // For LIVE streams: Use WebRTC playback (HLS not available during live)
+              // For VOD streams: Use HLS playback
+              const isLive = streamStatus === 'connected' || streamInfo?.is_active
               
-              if (apiPlaybackUrl && !candidateUrls.includes(apiPlaybackUrl)) {
-                candidateUrls.unshift(apiPlaybackUrl) // Add to front as highest priority
-                console.log('✅ [VIEWER] Using playback URL from Cloudflare API:', apiPlaybackUrl)
-              } else if (!apiPlaybackUrl) {
-                console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', liveInput.status)
+              if (isLive && webRTCPlaybackUrl) {
+                // Use WebRTC for live streams
+                console.log('✅ [VIEWER] Stream is LIVE - Using WebRTC playback:', webRTCPlaybackUrl)
+                setupWebRTCPlayback(video, webRTCPlaybackUrl)
+                return // Exit early, don't poll for HLS
+              } else if (!isLive && hlsPlaybackUrl) {
+                // Use HLS for VOD
+                candidateUrls.unshift(hlsPlaybackUrl)
+                console.log('✅ [VIEWER] Stream is VOD - Using HLS playback:', hlsPlaybackUrl)
+              } else if (webRTCPlaybackUrl) {
+                // Fallback: try WebRTC even if status unclear
+                console.log('⚠️ [VIEWER] Status unclear, trying WebRTC playback:', webRTCPlaybackUrl)
+                setupWebRTCPlayback(video, webRTCPlaybackUrl)
+                return
+              } else {
+                console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', streamStatus)
               }
             } else {
               console.warn('⚠️ [VIEWER] Cloudflare API response was not successful:', cfData)
@@ -326,6 +400,15 @@ function StreamViewer({ streamId }) {
       cancelled = true
       if (hlsRef.current) {
         hlsRef.current.destroy()
+      }
+      // Clean up WebRTC connection if it exists
+      if (videoRef.current?._webrtcPc) {
+        videoRef.current._webrtcPc.close()
+        videoRef.current._webrtcPc = null
+      }
+      if (videoRef.current?.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop())
+        videoRef.current.srcObject = null
       }
     }
   }, [streamInfo?.cloudflare_playback_url])
