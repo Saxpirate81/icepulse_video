@@ -2307,18 +2307,18 @@ function VideoRecorder() {
         {/* Main Layout: Video on top, Controls below (desktop) or stacked (mobile) */}
         <div className="flex flex-col flex-1 min-h-0 gap-4">
           {/* Video Preview Section - Full width, takes most space */}
-          <div className="flex-[3] flex flex-col min-h-0">
+          <div className="flex-1 flex flex-col min-h-0">
             <div 
               ref={videoContainerRef}
               className={`bg-gray-800 rounded-xl ${isRecording ? 'p-0' : 'p-2'} shadow-2xl relative flex-1 flex flex-col min-h-0 ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
             >
-              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden flex-1 min-h-0'}`}>
+              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden w-full h-full'}`}>
                 <video
                   ref={videoRef}
                   autoPlay
                   muted
                   playsInline
-                  className={`${isRecording ? 'w-full h-full object-contain' : 'w-full h-full object-cover'} ${isRecording ? 'rounded-none' : ''}`}
+                  className={`w-full h-full object-contain ${isRecording ? 'rounded-none' : ''}`}
                   style={{ transform: 'scaleX(-1)' }}
                 />
                 
@@ -2363,40 +2363,92 @@ function VideoRecorder() {
                 )}
               </div>
               
-              {/* Recording Indicator - Blinking Dot - Positioned relative to container */}
+              {/* Recording Indicator - Full screen mode */}
               {isRecording && (
-                <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 pointer-events-none">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-white text-sm font-semibold bg-black bg-opacity-70 px-2 py-1 rounded backdrop-blur-sm">REC</span>
-                  
-                  {/* Share button while recording */}
-                  {streamUrl && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        navigator.clipboard.writeText(streamUrl)
-                        setUrlCopied(true)
-                        setTimeout(() => setUrlCopied(false), 2000)
-                      }}
-                      className="pointer-events-auto flex items-center gap-2 px-3 py-1 bg-blue-600 bg-opacity-80 hover:bg-opacity-100 rounded text-white text-xs font-semibold backdrop-blur-sm transition-all"
-                    >
-                      {urlCopied ? <Check className="w-3 h-3" /> : <Share2 className="w-3 h-3" />}
-                      <span>{urlCopied ? 'Copied!' : 'Share Stream'}</span>
-                    </button>
+                <>
+                  {/* Top left: Camera swap button */}
+                  {cameras.length > 1 && (
+                    <div className="absolute top-4 left-4 z-[100] pointer-events-auto">
+                      {isMobile ? (
+                        <button
+                          onClick={flipCamera}
+                          className="flex items-center gap-2 px-4 py-2 bg-gray-900/80 hover:bg-gray-800/90 rounded-lg text-white text-sm font-semibold backdrop-blur-sm transition-all shadow-md border border-gray-700/50"
+                          title={facingMode === 'environment' ? 'Switch to Front Camera' : 'Switch to Back Camera'}
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          <span className="hidden sm:inline">
+                            {facingMode === 'environment' ? 'Front' : 'Back'}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="bg-gray-900/80 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-md">
+                          <Dropdown
+                            options={cameras.map((camera) => ({
+                              value: camera.deviceId,
+                              label: camera.label || `Camera ${cameras.indexOf(camera) + 1}`,
+                            }))}
+                            value={selectedCameraId || ''}
+                            onChange={(cameraId) => switchCamera(cameraId)}
+                            placeholder="Camera..."
+                            multiple={false}
+                            showAllOption={false}
+                            disabled={false}
+                            icon={<Camera className="w-4 h-4 text-gray-400 flex-shrink-0" />}
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
-                </div>
+
+                  {/* Top right corner: REC indicator and Share button */}
+                  <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 pointer-events-none">
+                    <div className="flex items-center gap-2 bg-black bg-opacity-80 px-3 py-2 rounded-lg backdrop-blur-sm">
+                      <div className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                      </div>
+                      <span className="text-white text-base font-bold">REC</span>
+                    </div>
+                    
+                    {/* Share button while recording */}
+                    {streamUrl && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigator.clipboard.writeText(streamUrl)
+                          setUrlCopied(true)
+                          setTimeout(() => setUrlCopied(false), 2000)
+                        }}
+                        className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-blue-600 bg-opacity-90 hover:bg-opacity-100 rounded-lg text-white text-sm font-semibold backdrop-blur-sm transition-all shadow-md"
+                      >
+                        {urlCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                        <span>{urlCopied ? 'Copied!' : 'Share Stream'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Bottom center: Large Stop Recording Button */}
+                  <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto">
+                    <button
+                      onClick={stopRecording}
+                      className="flex items-center gap-3 px-8 py-4 bg-red-600 hover:bg-red-700 rounded-xl font-bold text-lg sm:text-xl transition-all shadow-2xl border-2 border-red-400 text-white transform hover:scale-105 active:scale-95"
+                    >
+                      <Square className="w-6 h-6 sm:w-7 sm:h-7 fill-current" />
+                      <span>Stop Recording</span>
+                    </button>
+                  </div>
+                </>
               )}
 
-              {/* Stop Recording Button - Only visible during recording - Positioned relative to container */}
-              {isRecording && (
-                <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[100] pointer-events-auto">
-                  <button
-                    onClick={stopRecording}
-                    className="flex items-center gap-2 px-6 py-3 bg-red-600 bg-opacity-90 hover:bg-opacity-100 backdrop-blur-sm rounded-lg font-semibold transition-all shadow-lg border border-red-400 text-white"
-                  >
-                    <Square className="w-5 h-5 fill-current" />
-                    <span>Stop Recording</span>
-                  </button>
+              {/* Not Recording Indicator - Show when preview is active but not recording */}
+              {!isRecording && stream && (
+                <div className="absolute top-4 left-4 z-[100] pointer-events-none">
+                  <div className="bg-gray-900/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-gray-700/50">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                      <span className="text-gray-300 text-sm font-medium">Preview</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -2512,26 +2564,25 @@ function VideoRecorder() {
                   </div>
                 )}
 
-                {/* Camera & Audio Controls Card */}
-                  {stream && (
-                  <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
-                    <p className="text-xs text-gray-400 mb-3 font-medium uppercase tracking-wide text-center">Settings</p>
-                    <div className="flex flex-col gap-3">
-                      {/* Camera Controls */}
-                      {cameras.length > 1 && (
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-2 text-center">Camera</label>
-                          {isMobile ? (
+                {/* Camera & Audio Controls Card - Always visible */}
+                <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
+                  <p className="text-xs text-gray-400 mb-3 font-medium uppercase tracking-wide text-center">Settings</p>
+                  <div className="flex flex-col gap-3">
+                    {/* Camera Controls */}
+                    {cameras.length > 1 && (
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-2 text-center">Camera</label>
+                        {isMobile ? (
                           <button
                             onClick={flipCamera}
                             disabled={isRecording}
-                              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm"
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded-lg font-medium transition-colors text-sm"
                             title={facingMode === 'environment' ? 'Currently: Back Camera - Click to switch to Front' : 'Currently: Front Camera - Click to switch to Back'}
                           >
-                              <RotateCcw className="w-4 h-4" />
-                              <span>Switch to {facingMode === 'environment' ? 'Front' : 'Back'}</span>
+                            <RotateCcw className="w-4 h-4" />
+                            <span>Switch to {facingMode === 'environment' ? 'Front' : 'Back'}</span>
                           </button>
-                          ) : (
+                        ) : (
                           <Dropdown
                             options={cameras.map((camera) => ({
                               value: camera.deviceId,
@@ -2543,40 +2594,40 @@ function VideoRecorder() {
                             multiple={false}
                             showAllOption={false}
                             disabled={isRecording}
-                              icon={<Camera className="w-4 h-4 text-gray-400 flex-shrink-0" />}
+                            icon={<Camera className="w-4 h-4 text-gray-400 flex-shrink-0" />}
                           />
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
+                    )}
 
-                      {/* Audio Toggle */}
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-2 text-center">Audio</label>
+                    {/* Audio Toggle */}
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-2 text-center">Audio</label>
                       <button
                         onClick={toggleAudio}
-                          className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-colors text-sm shadow-md ${
+                        disabled={!stream}
+                        className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-colors text-sm shadow-md ${
                           audioEnabled
                             ? 'bg-green-600 hover:bg-green-700 text-white'
                             : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          }`}
-                        title={audioEnabled ? 'Disable audio recording' : 'Enable audio recording'}
+                        } ${!stream ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={!stream ? 'Camera must be active to toggle audio' : (audioEnabled ? 'Disable audio recording' : 'Enable audio recording')}
                       >
                         {audioEnabled ? (
                           <>
-                              <Mic className="w-4 h-4" />
+                            <Mic className="w-4 h-4" />
                             <span>Audio On</span>
                           </>
                         ) : (
                           <>
-                              <MicOff className="w-4 h-4" />
+                            <MicOff className="w-4 h-4" />
                             <span>Audio Off</span>
                           </>
                         )}
                       </button>
                     </div>
-            </div>
-          </div>
-                )}
+                  </div>
+                </div>
 
                 {/* Event Selection Prompt */}
                 {!selectedGameId && (
