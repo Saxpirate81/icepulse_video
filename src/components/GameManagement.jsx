@@ -228,9 +228,16 @@ function GameManagement() {
                                 <span className="text-gray-300">{season?.name || 'Unknown Season'}</span>
                               </div>
                             </div>
-                            <div className="text-lg font-semibold text-white mb-1">
-                              vs. {game.opponent}
-                            </div>
+                            {game.opponent && (
+                              <div className="text-lg font-semibold text-white mb-1">
+                                vs. {game.opponent}
+                              </div>
+                            )}
+                            {!game.opponent && game.eventType && game.eventType !== 'game' && (
+                              <div className="text-lg font-semibold text-white mb-1">
+                                {game.eventType === 'practice' ? 'Practice Session' : 'Skills Session'}
+                              </div>
+                            )}
                             {game.location && (
                               <div className="text-sm text-gray-400 mb-1">
                                 📍 {game.location}
