@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Video, Square, Upload, CheckCircle, Clock, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell, Copy, Share2, Check, RotateCcw } from 'lucide-react'
+import { Video, Square, AlertCircle, RefreshCw, HelpCircle, X, Mic, MicOff, Camera, Calendar, Sparkles, Dumbbell, Copy, Share2, Check, RotateCcw } from 'lucide-react'
 import Dropdown from './Dropdown'
 import { useAuth } from '../context/AuthContext'
 import { useOrgOptional } from '../context/OrgContext'
@@ -2069,9 +2069,9 @@ function VideoRecorder() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        <div>
           {/* Video Preview Section */}
-          <div className="lg:col-span-2">
+          <div>
             <div 
               ref={videoContainerRef}
               className={`bg-gray-800 rounded-lg ${isRecording ? 'p-0' : 'p-4 sm:p-6'} shadow-xl relative ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
@@ -2269,78 +2269,6 @@ function VideoRecorder() {
                     </div>
                   )}
                 </>
-              )}
-            </div>
-          </div>
-
-          {/* Debug Panel - Hidden during recording on mobile */}
-          <div className={`lg:col-span-1 ${isRecording ? 'hidden lg:block' : ''}`}>
-            <div className="bg-gray-800 rounded-lg p-4 sm:p-6 shadow-xl">
-              <div className="flex items-center gap-2 mb-4">
-                <Upload className="w-5 h-5 text-blue-400" />
-                <h2 className="text-xl font-semibold">Upload Chunks</h2>
-              </div>
-
-              <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                {chunks.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <Clock className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p>No chunks yet</p>
-                    <p className="text-sm mt-1">Start recording to see chunks</p>
-                  </div>
-                ) : (
-                  chunks.map((chunk) => (
-                    <div
-                      key={chunk.id}
-                      className="bg-gray-700 rounded-lg p-4 border border-gray-600"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {chunk.status === 'completed' ? (
-                            <CheckCircle className="w-5 h-5 text-green-400" />
-                          ) : (
-                            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                          )}
-                          <span className="font-mono text-sm text-gray-300">
-                            Chunk #{chunk.id.toString().slice(-6)}
-                          </span>
-                        </div>
-                        <span className="text-xs text-gray-400">
-                          {formatTime(chunk.timestamp)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-400">
-                          {formatBytes(chunk.size)}
-                        </span>
-                        <span
-                          className={`text-xs font-semibold ${
-                            chunk.status === 'completed'
-                              ? 'text-green-400'
-                              : 'text-blue-400'
-                          }`}
-                        >
-                          {chunk.status === 'completed' ? 'Uploaded' : 'Uploading...'}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {chunks.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-gray-700">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">Total Chunks:</span>
-                    <span className="font-semibold">{chunks.length}</span>
-                  </div>
-                  <div className="flex justify-between text-sm mt-1">
-                    <span className="text-gray-400">Completed:</span>
-                    <span className="font-semibold text-green-400">
-                      {chunks.filter((c) => c.status === 'completed').length}
-                    </span>
-                  </div>
-                </div>
               )}
             </div>
           </div>
