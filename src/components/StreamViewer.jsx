@@ -468,8 +468,10 @@ function StreamViewer({ streamId, isPreview = false }) {
       if (!readyUrl) {
         console.warn('⚠️ Manifest not ready after extended polling')
         const browserInfo = getBrowserInfo()
-        if (browserInfo.isSafari) {
-          setError('Safari does not support live streaming for WebRTC-published streams. Please use Chrome, Firefox, or Edge to view live streams. The recorded video will be available after the stream ends.')
+        // Cloudflare Stream live broadcasts published via WebRTC don't generate HLS manifests during live
+        // Mobile devices and Safari can't play live WebRTC-published streams
+        if (browserInfo.isSafari || browserInfo.isMobile || browserInfo.isIOS) {
+          setError('Live streaming is not available on this device. Cloudflare Stream live broadcasts published via WebRTC only support WebRTC playback, which is not available on mobile devices or Safari. Please use a desktop browser (Chrome, Firefox, or Edge) to view live streams. The recorded video will be available after the stream ends.')
         } else {
           setError('Stream manifest is not ready yet. Please try again shortly.')
         }
