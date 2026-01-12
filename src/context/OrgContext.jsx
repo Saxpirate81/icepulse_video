@@ -1239,7 +1239,17 @@ export function OrgProvider({ children }) {
   }
 
   const addParent = async (parent) => {
-    if (!user?.id || !organization?.id) return
+    if (!user?.id || !organization?.id) {
+      console.error('❌ [addParent] Missing user or organization:', { userId: user?.id, orgId: organization?.id })
+      return
+    }
+
+    console.log('🔍 [addParent] Attempting to add parent:', {
+      organizationId: organization.id,
+      userId: user.id,
+      parentName: parent.fullName || parent.name,
+      parentEmail: parent.email
+    })
 
     try {
       const { data, error } = await supabase
@@ -1256,7 +1266,13 @@ export function OrgProvider({ children }) {
         .single()
 
       if (error) {
-        console.error('Error adding parent:', error)
+        console.error('❌ [addParent] Error adding parent:', error)
+        console.error('❌ [addParent] Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        })
         return
       }
 
