@@ -112,9 +112,11 @@ function StreamViewer({ streamId }) {
     console.log('🎬 [VIEWER] Starting setup for URL:', currentPlaybackUrl)
 
     // Setup WebRTC playback for live streams (WHEP protocol)
-    const setupWebRTCPlayback = async (videoElement, playbackUrl) => {
+    const setupWebRTCPlayback = async (videoElement, playbackUrl, retryCount = 0) => {
+      if (cancelled) return
+      
       try {
-        console.log('🎥 [VIEWER] Setting up WebRTC playback:', playbackUrl)
+        console.log('🎥 [VIEWER] Setting up WebRTC playback:', playbackUrl, retryCount > 0 ? `(retry ${retryCount})` : '')
         
         // Create RTCPeerConnection for receiving
         const pc = new RTCPeerConnection({
@@ -156,6 +158,22 @@ function StreamViewer({ streamId }) {
         })
         
         if (!response.ok) {
+          // 409 means stream is not ready yet (not active or not receiving data)
+          // Don't show error, just set waiting state
+          if (response.status === 409) {
+            console.log('⏳ [VIEWER] Stream not ready yet (409), will retry...')
+            setIsLive(false)
+            setError(null) // Clear any previous errors
+            // Retry after a delay (max 10 retries = 50 seconds)
+            if (retryCount < 10 && !cancelled) {
+              setTimeout(() => {
+                if (videoElement && !cancelled) {
+                  setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
+                }
+              }, 5000)
+            }
+            return
+          }
           throw new Error(`WHEP request failed: ${response.status} ${response.statusText}`)
         }
         
@@ -172,7 +190,18 @@ function StreamViewer({ streamId }) {
         
       } catch (error) {
         console.error('❌ [VIEWER] WebRTC playback setup failed:', error)
-        setError(`Failed to connect to live stream: ${error.message}`)
+        // For errors, show waiting message instead of error
+        setIsLive(false)
+        setError(null)
+        // Retry after a delay (max 10 retries = 50 seconds)
+        if (retryCount < 10 && !cancelled) {
+          console.log('⏳ [VIEWER] Will retry connection...')
+          setTimeout(() => {
+            if (videoElement && !cancelled) {
+              setupWebRTCPlayback(videoElement, playbackUrl, retryCount + 1)
+            }
+          }, 5000)
+        }
       }
     }
 
@@ -248,7 +277,7 @@ function StreamViewer({ streamId }) {
               if (isLive && webRTCPlaybackUrl) {
                 // Use WebRTC for live streams
                 console.log('✅ [VIEWER] Stream is LIVE - Using WebRTC playback:', webRTCPlaybackUrl)
-                setupWebRTCPlayback(video, webRTCPlaybackUrl)
+                setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
                 return // Exit early, don't poll for HLS
               } else if (!isLive && hlsPlaybackUrl) {
                 // Use HLS for VOD
@@ -257,7 +286,7 @@ function StreamViewer({ streamId }) {
               } else if (webRTCPlaybackUrl) {
                 // Fallback: try WebRTC even if status unclear
                 console.log('⚠️ [VIEWER] Status unclear, trying WebRTC playback:', webRTCPlaybackUrl)
-                setupWebRTCPlayback(video, webRTCPlaybackUrl)
+                setupWebRTCPlayback(video, webRTCPlaybackUrl, 0)
                 return
               } else {
                 console.warn('⚠️ [VIEWER] Cloudflare API did not return a playback URL. Status:', streamStatus)
@@ -413,16 +442,8 @@ function StreamViewer({ streamId }) {
     }
   }, [streamInfo?.cloudflare_playback_url])
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center text-white">
-        <div className="text-center">
-          <WifiOff className="w-16 h-16 mx-auto mb-4 text-gray-500" />
-          <p className="text-xl">{error}</p>
-        </div>
-      </div>
-    )
-  }
+  // Don't show error screen - show waiting UI instead
+  // Errors are handled gracefully with retries
 
   if (!streamInfo) {
     return (
@@ -443,7 +464,7 @@ function StreamViewer({ streamId }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden">
       {/* Contemporary Header with Live Indicator */}
-      <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/95 via-black/80 to-transparent backdrop-blur-sm p-3 sm:p-4 border-b border-gray-800/50">
+      <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/95 via-black/80 to-transparent backdrop-blur-sm p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
             <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
@@ -492,15 +513,15 @@ function StreamViewer({ streamId }) {
           style={{ transform: 'scaleX(-1)' }}
         />
         
-        {/* Waiting / Offline Overlay */}
-        {(!streamInfo.cloudflare_playback_url && !isLive) && (
+        {/* Waiting / Offline Overlay - Show when stream is not live */}
+        {!isLive && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
             <div className="text-center px-4">
               <div className="relative mb-6">
                 <Wifi className="w-20 h-20 sm:w-24 sm:h-24 mx-auto text-gray-700 animate-pulse" />
               </div>
               <h2 className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-gray-400 via-gray-300 to-gray-400 bg-clip-text text-transparent mb-2">
-                Stream Starting Soon...
+                Video will start streaming momentarily...
               </h2>
               <p className="text-gray-400 text-sm sm:text-base">
                 Waiting for broadcast signal
