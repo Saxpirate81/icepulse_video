@@ -86,11 +86,33 @@ BEGIN
       AND pa.season_id = p_season_id
     ) INTO v_has_access;
 
+  ELSIF p_user_role = 'organization' OR p_user_role = 'coach' THEN
+    -- For organization/coach users: verify they own the organization associated with this team
+    SELECT EXISTS (
+      SELECT 1 FROM icepulse_organizations o
+      WHERE o.id = v_organization_id
+      AND o.owner_id = p_user_id
+    ) INTO v_has_access;
+
+    -- If user is a coach, also check if they're assigned to this organization
+    IF NOT v_has_access AND p_user_role = 'coach' THEN
+      SELECT EXISTS (
+        SELECT 1 FROM icepulse_coaches c
+        WHERE c.organization_id = v_organization_id
+        AND c.profile_id = p_user_id
+      ) INTO v_has_access;
+    END IF;
+
+    IF NOT v_has_access THEN
+      RAISE EXCEPTION 'User does not have permission to create games for this organization';
+    END IF;
+
   ELSE
     RAISE EXCEPTION 'Invalid user role for game creation';
   END IF;
 
-  IF NOT v_has_access THEN
+  -- For players/parents, check access to team/season
+  IF (p_user_role = 'player' OR p_user_role = 'parent') AND NOT v_has_access THEN
     RAISE EXCEPTION 'User does not have access to create games for this team and season';
   END IF;
 

@@ -5,7 +5,7 @@ import InviteButton from './InviteButton'
 import Dropdown from './Dropdown'
 
 function PlayerManagement() {
-  const { organization, addPlayer, updatePlayer, deletePlayer, assignPlayerToTeam, sendPlayerInvite, resendPlayerInvite } = useOrg()
+  const { organization, addPlayer, updatePlayer, deletePlayer, assignPlayerToTeam, sendPlayerInvite, resendPlayerInvite, checkStreamingPermission, updateStreamingPermission } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState(null)
   const [playerName, setPlayerName] = useState('')
@@ -16,6 +16,8 @@ function PlayerManagement() {
   const [jerseyNumber, setJerseyNumber] = useState('')
   const [isExistingUser, setIsExistingUser] = useState(false)
   const [existingPlayers, setExistingPlayers] = useState([]) // TODO: Fetch from API - all app users who are players
+  const [canStreamLive, setCanStreamLive] = useState(false)
+  const [isLoadingPermission, setIsLoadingPermission] = useState(false)
 
   // Get existing players from organization or from all app users (TODO: fetch from API)
   const orgPlayers = organization?.players || []
@@ -68,14 +70,52 @@ function PlayerManagement() {
     }
   }
 
-  const handleEdit = (player) => {
+  const handleEdit = async (player) => {
     // Get the latest player data from organization context
     const latestPlayer = organization?.players?.find(p => p.id === player.id) || player
     setEditingPlayer(latestPlayer)
     setPlayerName(latestPlayer.fullName || latestPlayer.name)
     setPlayerEmail(latestPlayer.email || '')
     setIsExistingUser(latestPlayer.isExistingUser || false)
+    
+    // Load streaming permission if player has a profile_id
+    if (latestPlayer.profileId && checkStreamingPermission) {
+      setIsLoadingPermission(true)
+      try {
+        const hasPermission = await checkStreamingPermission(latestPlayer.profileId)
+        setCanStreamLive(hasPermission)
+      } catch (error) {
+        console.error('Error loading streaming permission:', error)
+        setCanStreamLive(false)
+      } finally {
+        setIsLoadingPermission(false)
+      }
+    } else {
+      setCanStreamLive(false)
+    }
+    
     setShowAddModal(true)
+  }
+
+  const handleStreamingPermissionChange = async (enabled) => {
+    if (!currentEditingPlayer?.profileId || !updateStreamingPermission) {
+      return
+    }
+
+    setIsLoadingPermission(true)
+    try {
+      const result = await updateStreamingPermission(currentEditingPlayer.profileId, enabled)
+      if (result.success) {
+        setCanStreamLive(enabled)
+      } else {
+        alert(result.message || 'Failed to update streaming permission')
+      }
+    } catch (error) {
+      console.error('Error updating streaming permission:', error)
+      alert('Failed to update streaming permission')
+    } finally {
+      setIsLoadingPermission(false)
+    }
   }
 
   // Get the latest player data when editing (refreshed after assignments are added/updated)
@@ -253,6 +293,29 @@ function PlayerManagement() {
                     />
                     <p className="text-xs text-gray-400 mt-1">Used for sending invites and notifications. Email aliases (e.g., name+1@example.com) are supported.</p>
                   </div>
+                  {/* Streaming Permission - Only show if player has profile_id (is existing user) */}
+                  {currentEditingPlayer?.profileId && (
+                    <div className="border-t border-gray-700 pt-4">
+                      <label className="block text-gray-300 mb-2">Streaming Access</label>
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={canStreamLive}
+                          onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
+                          disabled={isLoadingPermission}
+                          className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                        />
+                        <div className="flex-1">
+                          <label className="text-white cursor-pointer" onClick={() => !isLoadingPermission && handleStreamingPermissionChange(!canStreamLive)}>
+                            Allow Live Streaming
+                          </label>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Enable this user to stream live video. If disabled while streaming, active streams will be stopped.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {/* Show existing team assignments for editing */}
                   {currentEditingPlayer.teamAssignments && currentEditingPlayer.teamAssignments.length > 0 && (
                     <div>

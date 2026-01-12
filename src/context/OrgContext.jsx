@@ -359,6 +359,7 @@ export function OrgProvider({ children }) {
           isExistingUser: coach.is_existing_user,
           inviteSent: coach.invite_sent,
           inviteDate: coach.invite_date,
+          profileId: coach.profile_id, // Add profile_id for streaming permission checks
           assignments: (coach.assignments || []).map(a => ({
             id: a.id,
             teamId: a.team_id,
@@ -377,6 +378,7 @@ export function OrgProvider({ children }) {
           isExistingUser: player.is_existing_user,
           inviteSent: player.invite_sent,
           inviteDate: player.invite_date,
+          profileId: player.profile_id, // Add profile_id for streaming permission checks
           teamAssignments: (player.assignments || []).map(a => ({
             id: a.id,
             teamId: a.team_id,
@@ -396,6 +398,7 @@ export function OrgProvider({ children }) {
           isExistingUser: parent.is_existing_user,
           inviteSent: parent.invite_sent,
           inviteDate: parent.invite_date,
+          profileId: parent.profile_id, // Add profile_id for streaming permission checks
           playerConnections: (parent.connections || []).map(c => c.player_id)
         })),
         games: (gamesResult.data || []).map(game => ({
@@ -2139,6 +2142,80 @@ export function OrgProvider({ children }) {
     }
   }
 
+  // Check if a user has streaming permission
+  const checkStreamingPermission = async (userId) => {
+    if (!userId) return false
+
+    try {
+      const { data, error } = await supabase
+        .from('icepulse_profiles')
+        .select('can_stream_live, streaming_enabled_at, streaming_enabled_by')
+        .eq('id', userId)
+        .single()
+
+      if (error) {
+        console.error('Error checking streaming permission:', error)
+        return false
+      }
+
+      return data?.can_stream_live || false
+    } catch (error) {
+      console.error('Error checking streaming permission:', error)
+      return false
+    }
+  }
+
+  // Update streaming permission for a user
+  const updateStreamingPermission = async (userId, enabled) => {
+    if (!user?.id || !userId) {
+      return { success: false, message: 'User ID required' }
+    }
+
+    try {
+      // If disabling, check for active streams and stop them
+      if (!enabled) {
+        const { data: activeStreams } = await supabase
+          .from('icepulse_streams')
+          .select('id')
+          .eq('created_by', userId)
+          .eq('is_active', true)
+
+        if (activeStreams && activeStreams.length > 0) {
+          // Stop all active streams for this user
+          for (const stream of activeStreams) {
+            await stopStream(stream.id)
+          }
+          console.log(`🛑 Stopped ${activeStreams.length} active stream(s) for user ${userId}`)
+        }
+      }
+
+      // Update permission
+      const updateData = {
+        can_stream_live: enabled,
+        streaming_enabled_at: enabled ? new Date().toISOString() : null,
+        streaming_enabled_by: enabled ? user.id : null
+      }
+
+      const { error } = await supabase
+        .from('icepulse_profiles')
+        .update(updateData)
+        .eq('id', userId)
+
+      if (error) {
+        console.error('Error updating streaming permission:', error)
+        return { success: false, message: error.message }
+      }
+
+      // Reload organization to refresh user data
+      await loadOrganization()
+
+      return { success: true, message: enabled ? 'Streaming enabled' : 'Streaming disabled' }
+    } catch (error) {
+      console.error('Error updating streaming permission:', error)
+      return { success: false, message: error.message }
+    }
+  }
+
   // ============================================
   // UPLOAD QUEUE MANAGEMENT (Legacy - Removed)
   // ============================================
@@ -2504,6 +2581,8 @@ export function OrgProvider({ children }) {
     stopStream,
     reactivateStream,
     getRecentlyStoppedStream,
+    checkStreamingPermission,
+    updateStreamingPermission,
     isLoading,
     databaseError,
     clearDatabaseError: () => setDatabaseError(null),

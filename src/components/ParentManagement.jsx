@@ -5,12 +5,14 @@ import InviteButton from './InviteButton'
 import Dropdown from './Dropdown'
 
 function ParentManagement() {
-  const { organization, addParent, updateParent, deleteParent, connectParentToPlayer, sendParentInvite, resendParentInvite } = useOrg()
+  const { organization, addParent, updateParent, deleteParent, connectParentToPlayer, sendParentInvite, resendParentInvite, checkStreamingPermission, updateStreamingPermission } = useOrg()
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingParent, setEditingParent] = useState(null)
   const [parentName, setParentName] = useState('')
   const [parentEmail, setParentEmail] = useState('')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState([])
+  const [canStreamLive, setCanStreamLive] = useState(false)
+  const [isLoadingPermission, setIsLoadingPermission] = useState(false)
 
   const playerOptions = organization?.players?.map(player => ({
     value: player.id,
@@ -37,12 +39,50 @@ function ParentManagement() {
     }
   }
 
-  const handleEdit = (parent) => {
+  const handleEdit = async (parent) => {
     setEditingParent(parent)
     setParentName(parent.name)
     setParentEmail(parent.email)
     setSelectedPlayerIds(parent.playerConnections || [])
+    
+    // Load streaming permission if parent has a profile_id
+    if (parent.profileId && checkStreamingPermission) {
+      setIsLoadingPermission(true)
+      try {
+        const hasPermission = await checkStreamingPermission(parent.profileId)
+        setCanStreamLive(hasPermission)
+      } catch (error) {
+        console.error('Error loading streaming permission:', error)
+        setCanStreamLive(false)
+      } finally {
+        setIsLoadingPermission(false)
+      }
+    } else {
+      setCanStreamLive(false)
+    }
+    
     setShowAddModal(true)
+  }
+
+  const handleStreamingPermissionChange = async (enabled) => {
+    if (!editingParent?.profileId || !updateStreamingPermission) {
+      return
+    }
+
+    setIsLoadingPermission(true)
+    try {
+      const result = await updateStreamingPermission(editingParent.profileId, enabled)
+      if (result.success) {
+        setCanStreamLive(enabled)
+      } else {
+        alert(result.message || 'Failed to update streaming permission')
+      }
+    } catch (error) {
+      console.error('Error updating streaming permission:', error)
+      alert('Failed to update streaming permission')
+    } finally {
+      setIsLoadingPermission(false)
+    }
   }
 
   const handleUpdate = () => {
@@ -195,6 +235,30 @@ function ParentManagement() {
                 />
                 <p className="text-xs text-gray-400 mt-1">Email aliases (e.g., name+1@example.com) are supported.</p>
               </div>
+
+              {/* Streaming Permission - Only show if parent has profile_id (is existing user) and is editing */}
+              {editingParent?.profileId && (
+                <div className="border-t border-gray-700 pt-4">
+                  <label className="block text-gray-300 mb-2">Streaming Access</label>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={canStreamLive}
+                      onChange={(e) => handleStreamingPermissionChange(e.target.checked)}
+                      disabled={isLoadingPermission}
+                      className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                    />
+                    <div className="flex-1">
+                      <label className="text-white cursor-pointer" onClick={() => !isLoadingPermission && handleStreamingPermissionChange(!canStreamLive)}>
+                        Allow Live Streaming
+                      </label>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Enable this user to stream live video. If disabled while streaming, active streams will be stopped.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {playerOptions.length > 0 && (
                 <div>

@@ -221,9 +221,9 @@ function Dropdown({
       // Use a small delay to ensure state updates are processed correctly
       onChange(newValues)
     } else {
-      // Single select mode
-      onChange(optionValue)
+      // Single select mode - close immediately on selection
       setIsOpen(false)
+      onChange(optionValue)
     }
   }
 
@@ -245,7 +245,10 @@ function Dropdown({
   }, [isOpen])
 
   return (
-    <div className={`relative ${className}`} ref={dropdownRef}>
+    <div 
+      className={`relative ${className}`} 
+      ref={dropdownRef}
+    >
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
@@ -271,7 +274,10 @@ function Dropdown({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-auto">
+        <div 
+          className="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-xl max-h-60 overflow-auto"
+          style={{ zIndex: 9999 }}
+        >
           {shouldShowAll && multiple && (
             <button
               type="button"
