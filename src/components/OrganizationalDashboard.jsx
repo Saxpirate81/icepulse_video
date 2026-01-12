@@ -34,8 +34,8 @@ function OrganizationalDashboard() {
   }, [organization, user, saveOrganization])
 
   // Filter tabs based on user permissions
+  // Setup tab is moved to the end (far right)
   const allTabs = [
-    { id: 'setup', label: 'Setup', icon: Settings, permission: 'edit_organization' },
     { id: 'teams', label: 'Teams', icon: Users, permission: 'manage_teams' },
     { id: 'seasons', label: 'Seasons/Tournaments', icon: Calendar, permission: 'manage_seasons' },
     { id: 'schedule', label: 'Schedule', icon: CalendarDays, permission: 'manage_games' },
@@ -44,6 +44,7 @@ function OrganizationalDashboard() {
     { id: 'coaches', label: 'Coaches', icon: UserCheck, permission: 'manage_coaches' },
     { id: 'players', label: 'Players', icon: UserPlus, permission: 'manage_players' },
     { id: 'parents', label: 'Parents', icon: Building2, permission: 'manage_parents' },
+    { id: 'setup', label: 'Setup', icon: Settings, permission: 'edit_organization' },
   ]
 
   const tabs = user ? allTabs.filter(tab => hasPermission(user, tab.permission)) : []

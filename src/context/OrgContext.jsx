@@ -338,6 +338,7 @@ export function OrgProvider({ children }) {
         id: orgData.id,
         name: orgData.name,
         ownerId: orgData.owner_id,
+        headerImageUrl: orgData.header_image_url,
         isOwner: isOwner,
         userRoleInOrg: userRoleInOrg,
         teams: (teamsResult.data || []).map(team => ({
@@ -471,6 +472,7 @@ export function OrgProvider({ children }) {
     try {
       const updateData = {}
       if (updates.name !== undefined) updateData.name = updates.name
+      if (updates.headerImageUrl !== undefined) updateData.header_image_url = updates.headerImageUrl
 
       const { error } = await supabase
         .from('icepulse_organizations')
@@ -487,6 +489,41 @@ export function OrgProvider({ children }) {
       await loadOrganization()
     } catch (error) {
       console.error('Error updating organization:', error)
+    }
+  }
+
+  // Upload header image to Supabase storage
+  const uploadHeaderImage = async (file) => {
+    if (!user?.id || !organization?.id || !file) return null
+
+    try {
+      // Create a unique filename
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${organization.id}/header-${Date.now()}.${fileExt}`
+      const filePath = `organizations/${fileName}`
+
+      // Upload to Supabase storage
+      const { data, error } = await supabase.storage
+        .from('videos') // Using existing videos bucket, or create 'images' bucket if preferred
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false
+        })
+
+      if (error) {
+        console.error('Error uploading header image:', error)
+        return null
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('videos')
+        .getPublicUrl(filePath)
+
+      return urlData.publicUrl
+    } catch (error) {
+      console.error('Error uploading header image:', error)
+      return null
     }
   }
 
@@ -2580,6 +2617,7 @@ export function OrgProvider({ children }) {
     switchOrganization, // Function to switch between organizations
     saveOrganization,
     updateOrganization,
+    uploadHeaderImage,
     addTeam,
     updateTeam,
     deleteTeam,

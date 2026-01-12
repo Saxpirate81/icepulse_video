@@ -23,7 +23,7 @@ function StreamViewer({ streamId }) {
             icepulse_games (
               *,
               icepulse_teams (name),
-              icepulse_organizations (name)
+              icepulse_organizations (name, header_image_url)
             )
           `)
         
@@ -465,6 +465,16 @@ function StreamViewer({ streamId }) {
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden">
       {/* Contemporary Header with Live Indicator */}
       <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/95 via-black/80 to-transparent backdrop-blur-sm p-3 sm:p-4">
+        {/* Header Image */}
+        {organization?.header_image_url && (
+          <div className="mb-3 -mx-3 sm:-mx-4">
+            <img
+              src={organization.header_image_url}
+              alt="Organization header"
+              className="w-full h-auto max-h-24 sm:max-h-32 object-contain"
+            />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
             <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
