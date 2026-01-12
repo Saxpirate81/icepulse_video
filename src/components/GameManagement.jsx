@@ -16,6 +16,11 @@ function GameManagement() {
   const [opponent, setOpponent] = useState('')
   const [location, setLocation] = useState('')
   const [notes, setNotes] = useState('')
+  
+  // Filter states
+  const [timeFilter, setTimeFilter] = useState('upcoming') // 'upcoming' | 'past'
+  const [filterTeamId, setFilterTeamId] = useState(null)
+  const [filterSeasonId, setFilterSeasonId] = useState(null)
 
   const isNew = !editingGame
 
@@ -103,8 +108,83 @@ function GameManagement() {
     label: `${season.name} (${season.type || 'season'})`
   })) || []
 
-  // Group games by date for better display
-  const gamesByDate = (organization?.games || []).reduce((acc, game) => {
+  // Get all games and filter them
+  const allGames = organization?.games || []
+  
+  // Get unique teams and seasons from saved events
+  const teamsWithEvents = [...new Set(allGames.map(g => g.teamId).filter(Boolean))]
+  const seasonsWithEvents = [...new Set(allGames.map(g => g.seasonId).filter(Boolean))]
+  
+  // Filter teams/seasons based on selected filter
+  let availableTeams = teamsWithEvents
+  let availableSeasons = seasonsWithEvents
+  
+  // If a team is selected, only show seasons that have events with that team
+  if (filterTeamId) {
+    availableSeasons = [...new Set(
+      allGames
+        .filter(g => g.teamId === filterTeamId)
+        .map(g => g.seasonId)
+        .filter(Boolean)
+    )]
+  }
+  
+  // If a season is selected, only show teams that have events in that season
+  if (filterSeasonId) {
+    availableTeams = [...new Set(
+      allGames
+        .filter(g => g.seasonId === filterSeasonId)
+        .map(g => g.teamId)
+        .filter(Boolean)
+    )]
+  }
+  
+  // Build filter dropdown options
+  const filterTeamOptions = availableTeams
+    .map(teamId => organization?.teams?.find(t => t.id === teamId))
+    .filter(Boolean)
+    .map(team => ({
+      value: team.id,
+      label: team.name
+    }))
+  
+  const filterSeasonOptions = availableSeasons
+    .map(seasonId => organization?.seasons?.find(s => s.id === seasonId))
+    .filter(Boolean)
+    .map(season => ({
+      value: season.id,
+      label: `${season.name} (${season.type || 'season'})`
+    }))
+
+  // Filter games by time (upcoming/past), team, and season
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  
+  const filteredGames = allGames.filter(game => {
+    // Time filter
+    if (game.gameDate) {
+      const gameDateObj = new Date(game.gameDate)
+      gameDateObj.setHours(0, 0, 0, 0)
+      const isPast = gameDateObj < today
+      
+      if (timeFilter === 'upcoming' && isPast) return false
+      if (timeFilter === 'past' && !isPast) return false
+    } else {
+      // Games without dates go to past
+      if (timeFilter === 'upcoming') return false
+    }
+    
+    // Team filter
+    if (filterTeamId && game.teamId !== filterTeamId) return false
+    
+    // Season filter
+    if (filterSeasonId && game.seasonId !== filterSeasonId) return false
+    
+    return true
+  })
+
+  // Group filtered games by date for better display
+  const gamesByDate = filteredGames.reduce((acc, game) => {
     const date = game.gameDate || 'No Date'
     if (!acc[date]) {
       acc[date] = []
@@ -152,21 +232,109 @@ function GameManagement() {
 
   return (
     <div className="bg-gray-800 rounded-lg p-6 shadow-xl">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Calendar className="w-6 h-6 text-blue-400" />
-          <h2 className="text-2xl font-bold">Game Schedule</h2>
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Calendar className="w-6 h-6 text-blue-400" />
+            <h2 className="text-2xl font-bold">Event Schedule</h2>
+          </div>
+          <button
+            onClick={() => {
+              resetForm()
+              setShowAddModal(true)
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            <span>Add Event</span>
+          </button>
         </div>
-        <button
-          onClick={() => {
-            resetForm()
-            setShowAddModal(true)
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          <span>Add Event</span>
-        </button>
+        
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          {/* Upcoming/Past buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTimeFilter('upcoming')}
+              className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                timeFilter === 'upcoming'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              Upcoming
+            </button>
+            <button
+              onClick={() => setTimeFilter('past')}
+              className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                timeFilter === 'past'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              Past
+            </button>
+          </div>
+          
+          {/* Team and Season filters */}
+          <div className="flex flex-col sm:flex-row gap-3 flex-1">
+            {filterTeamOptions.length > 0 && (
+              <div className="w-full sm:w-48">
+                <Dropdown
+                  options={[
+                    { value: '', label: 'All Teams' },
+                    ...filterTeamOptions
+                  ]}
+                  value={filterTeamId || ''}
+                  onChange={(val) => {
+                    setFilterTeamId(val || null)
+                    // Clear season filter if it's no longer valid
+                    if (val && filterSeasonId) {
+                      const validSeasons = allGames
+                        .filter(g => g.teamId === val)
+                        .map(g => g.seasonId)
+                        .filter(Boolean)
+                      if (!validSeasons.includes(filterSeasonId)) {
+                        setFilterSeasonId(null)
+                      }
+                    }
+                  }}
+                  placeholder="Filter by Team..."
+                  multiple={false}
+                  showAllOption={false}
+                />
+              </div>
+            )}
+            
+            {filterSeasonOptions.length > 0 && (
+              <div className="w-full sm:w-48">
+                <Dropdown
+                  options={[
+                    { value: '', label: 'All Seasons' },
+                    ...filterSeasonOptions
+                  ]}
+                  value={filterSeasonId || ''}
+                  onChange={(val) => {
+                    setFilterSeasonId(val || null)
+                    // Clear team filter if it's no longer valid
+                    if (val && filterTeamId) {
+                      const validTeams = allGames
+                        .filter(g => g.seasonId === val)
+                        .map(g => g.teamId)
+                        .filter(Boolean)
+                      if (!validTeams.includes(filterTeamId)) {
+                        setFilterTeamId(null)
+                      }
+                    }
+                  }}
+                  placeholder="Filter by Season..."
+                  multiple={false}
+                  showAllOption={false}
+                />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Games List */}
