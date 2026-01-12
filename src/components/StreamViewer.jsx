@@ -467,7 +467,12 @@ function StreamViewer({ streamId, isPreview = false }) {
       const readyUrl = await waitForManifest()
       if (!readyUrl) {
         console.warn('⚠️ Manifest not ready after extended polling')
-        setError('Stream manifest is not ready yet. Please try again shortly.')
+        const browserInfo = getBrowserInfo()
+        if (browserInfo.isSafari) {
+          setError('Safari does not support live streaming for WebRTC-published streams. Please use Chrome, Firefox, or Edge to view live streams. The recorded video will be available after the stream ends.')
+        } else {
+          setError('Stream manifest is not ready yet. Please try again shortly.')
+        }
         return
       }
 
