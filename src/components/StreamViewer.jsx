@@ -369,8 +369,9 @@ function StreamViewer({ streamId, isPreview = false }) {
                         candidateUrls.unshift(hlsPlaybackUrl)
                         console.log('✅ [VIEWER] Using HLS playback (Safari):', hlsPlaybackUrl)
                       } else {
-                        setError(`Safari does not support live streaming playback. Cloudflare Stream's live broadcasts use WHEP (WebRTC-HTTP Egress Protocol), which is not supported in Safari. Please use Chrome, Firefox, or Edge to view live streams.`)
-                        return
+                        // Fallback to constructed manifest URLs (Cloudflare provides HLS manifests even if not in API response)
+                        console.log('✅ [VIEWER] No HLS URL in API response, using constructed manifest URLs for Safari')
+                        // candidateUrls already contains manifest URLs from liveInputId, so continue with polling
                       }
                     } else {
                       // Desktop Chrome/Firefox/Edge: Use WebRTC for live streams (will retry on 409 if no publisher yet)
