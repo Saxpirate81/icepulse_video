@@ -157,18 +157,35 @@ function GameManagement() {
     }))
 
   // Filter games by time (upcoming/past), team, and season
+  // Get today's date in local timezone (Eastern time for New Hampshire)
   const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const todayYear = today.getFullYear()
+  const todayMonth = today.getMonth()
+  const todayDate = today.getDate()
   
   const filteredGames = allGames.filter(game => {
     // Time filter
     if (game.gameDate) {
-      const gameDateObj = new Date(game.gameDate)
-      gameDateObj.setHours(0, 0, 0, 0)
-      const isPast = gameDateObj < today
-      
-      if (timeFilter === 'upcoming' && isPast) return false
-      if (timeFilter === 'past' && !isPast) return false
+      // Parse the game date string (format: YYYY-MM-DD)
+      const gameDateParts = game.gameDate.split('-')
+      if (gameDateParts.length === 3) {
+        const gameYear = parseInt(gameDateParts[0], 10)
+        const gameMonth = parseInt(gameDateParts[1], 10) - 1 // Month is 0-indexed
+        const gameDay = parseInt(gameDateParts[2], 10)
+        
+        // Create date objects for comparison (in local timezone)
+        const gameDateObj = new Date(gameYear, gameMonth, gameDay)
+        const todayDateObj = new Date(todayYear, todayMonth, todayDate)
+        
+        // Compare dates: if game date is today or in the future, it's upcoming
+        const isPast = gameDateObj < todayDateObj
+        
+        if (timeFilter === 'upcoming' && isPast) return false
+        if (timeFilter === 'past' && !isPast) return false
+      } else {
+        // Invalid date format - treat as past
+        if (timeFilter === 'upcoming') return false
+      }
     } else {
       // Games without dates go to past
       if (timeFilter === 'upcoming') return false
