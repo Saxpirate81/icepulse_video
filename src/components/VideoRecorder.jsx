@@ -1654,7 +1654,7 @@ function VideoRecorder() {
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
       <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-3 sm:p-4 lg:p-6">
-        <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col min-h-0 gap-4">
+        <div className="max-w-7xl mx-auto w-full flex-1 flex flex-col min-h-0 gap-3">
 
         {/* Event Setup Modal */}
         {showEventModal && !isRecording && (
@@ -2270,17 +2270,19 @@ function VideoRecorder() {
                 {selectedGameId ? (
                   // If event is selected, show red "Record" button that immediately starts recording
                     <button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Close modal first
                       setShowEventModal(false)
-                      // Immediately start recording after closing modal
+                      // Immediately start recording - will go full screen
                       if (stream && !isRecording) {
-                        setTimeout(() => {
+                        // Use requestAnimationFrame to ensure modal is closed before starting recording
+                        requestAnimationFrame(() => {
                           startRecording()
-                        }, 100)
+                        })
                       }
                     }}
-                    disabled={!stream || !selectedGameId}
-                    className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
+                    disabled={!stream || !selectedGameId || isRecording}
+                    className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold text-base"
                   >
                     {streamUrl ? '🔴 Record & Stream' : '🔴 Record'}
                     </button>
@@ -2305,20 +2307,20 @@ function VideoRecorder() {
         )}
 
         {/* Main Layout: Video on top, Controls below (desktop) or stacked (mobile) */}
-        <div className="flex flex-col flex-1 min-h-0 gap-4">
-          {/* Video Preview Section - Full width, takes most space */}
-          <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex flex-col flex-1 min-h-0 gap-3">
+          {/* Video Preview Section - Full width, fits to width, height adjusts to aspect ratio */}
+          <div className="flex-shrink-0 flex flex-col w-full">
             <div 
               ref={videoContainerRef}
-              className={`bg-gray-800 rounded-xl ${isRecording ? 'p-0' : 'p-2'} shadow-2xl relative flex-1 flex flex-col min-h-0 ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
+              className={`bg-gray-800 rounded-xl ${isRecording ? 'p-0' : 'p-2'} shadow-2xl relative flex-shrink-0 w-full ${isRecording ? 'fixed inset-0 z-50 bg-black rounded-none' : ''}`}
             >
-              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden w-full h-full'}`}>
+              <div className={`relative bg-black ${isRecording ? 'w-full h-full' : 'rounded-lg overflow-hidden w-full'} ${!isRecording ? 'flex items-center justify-center' : ''}`} style={!isRecording ? { minHeight: '40vh', maxHeight: '60vh' } : {}}>
                 <video
                   ref={videoRef}
                   autoPlay
                   muted
                   playsInline
-                  className={`w-full h-full object-contain ${isRecording ? 'rounded-none' : ''}`}
+                  className={`${isRecording ? 'w-full h-full' : 'w-full h-auto max-h-full'} object-contain ${isRecording ? 'rounded-none' : ''}`}
                   style={{ transform: 'scaleX(-1)' }}
                 />
                 
@@ -2454,10 +2456,10 @@ function VideoRecorder() {
             </div>
           </div>
 
-          {/* Controls Section - Centered below video */}
+          {/* Controls Section - Centered below video, fits on screen */}
               {!isRecording && (
-            <div className="flex-[1] flex flex-col items-center gap-4 min-h-0">
-              <div className="w-full max-w-2xl flex flex-col gap-4">
+            <div className="flex-shrink-0 flex flex-col items-center gap-2 min-h-0 overflow-y-auto hide-scrollbar">
+              <div className="w-full max-w-2xl flex flex-col gap-2">
                 {/* Event Summary Card */}
                 <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4 shadow-lg">
                   <div className="flex flex-col items-center gap-3 mb-2">
