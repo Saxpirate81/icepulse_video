@@ -99,6 +99,16 @@ serve(async (req) => {
       })
     }
 
+    if (eventType === 'video.asset.live_stream_completed' && data?.live_stream_id) {
+      await supabaseRequest(`icepulse_streams?cloudflare_live_input_id=eq.${data.live_stream_id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active: false }),
+      })
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (eventType === 'video.asset.errored' && data?.live_stream_id) {
       await supabaseRequest(`icepulse_video_recordings?cloudflare_uid=eq.${data.live_stream_id}`, {
         method: 'PATCH',
