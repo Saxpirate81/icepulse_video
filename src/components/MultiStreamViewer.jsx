@@ -146,16 +146,8 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
           return
         }
 
-        // Only show live/recent streams (avoid stale ones that never flipped to inactive)
-        const liveWindowMinutes = 5
-        const cutoff = Date.now() - liveWindowMinutes * 60 * 1000
-        const liveOnly = (data || []).filter((stream) => {
-          if (!stream?.is_active) return false
-          const ts = stream.updated_at || stream.created_at
-          if (!ts) return true
-          const time = new Date(ts).getTime()
-          return Number.isNaN(time) ? true : time >= cutoff
-        })
+        // Only show active live streams (no time cutoff to avoid hiding long games)
+        const liveOnly = (data || []).filter((stream) => stream?.is_active)
 
         // Filter by organization if resolvedOrgId is provided
         const filteredStreams = resolvedOrgId

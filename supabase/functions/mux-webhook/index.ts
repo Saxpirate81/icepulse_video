@@ -112,6 +112,25 @@ serve(async (req) => {
       })
     }
 
+    if (
+      (eventType === 'video.live_stream.active' ||
+        eventType === 'video.live_stream.idle' ||
+        eventType === 'video.live_stream.disconnected' ||
+        eventType === 'video.live_stream.disabled') &&
+      data?.id
+    ) {
+      const shouldBeActive = eventType === 'video.live_stream.active'
+      await supabaseRequest(`icepulse_streams?cloudflare_live_input_id=eq.${data.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          is_active: shouldBeActive,
+        }),
+      })
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     return new Response(JSON.stringify({ ok: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
