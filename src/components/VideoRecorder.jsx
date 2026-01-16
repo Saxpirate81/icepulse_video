@@ -419,6 +419,7 @@ function VideoRecorder() {
   const [rtmpsComboCopied, setRtmpsComboCopied] = useState(false)
   const [hasCopiedBroadcastId, setHasCopiedBroadcastId] = useState(false)
   const [showLarixModal, setShowLarixModal] = useState(false)
+  const [isCreatingStream, setIsCreatingStream] = useState(false)
   const [recentlyStoppedStream, setRecentlyStoppedStream] = useState(null)
   const streamChunkIndexRef = useRef(0)
   const streamChunkIntervalRef = useRef(null)
@@ -523,6 +524,39 @@ function VideoRecorder() {
 
     const manualCopy = window.prompt('Copy this Broadcast ID:', text)
     return manualCopy !== null
+  }
+
+  const applyStreamData = (streamData, gameId) => {
+    if (!streamData?.id) return
+    setStreamId(streamData.id)
+    setStreamUrl(`${window.location.origin}/game/${gameId}/streams`)
+    if (organization?.id) {
+      setOrgStreamsUrl(`${window.location.origin}/org/${organization.id}/streams`)
+    }
+    if (streamData.whipUrl) {
+      whipUrlRef.current = streamData.whipUrl
+    }
+    if (streamData.rtmpsKey) {
+      setRtmpsKey(streamData.rtmpsKey)
+      setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
+    }
+  }
+
+  const ensureStreamForLiveToggle = async () => {
+    if (!hasStreamingPermission || !createStream) return
+    const gameId = selectedGameId || eventExistingGameId || currentGameIdRef.current
+    if (!gameId) return
+    if (rtmpsKey) return
+    setIsCreatingStream(true)
+    try {
+      const streamData = await createStream(gameId)
+      applyStreamData(streamData, gameId)
+    } catch (err) {
+      console.error('❌ Error creating stream on toggle:', err)
+      setError(`Stream creation failed: ${err.message}. You can still record locally.`)
+    } finally {
+      setIsCreatingStream(false)
+    }
   }
 
   const requestMediaAccess = async (cameraId = null, facingModeOverride = null) => {
@@ -2335,15 +2369,18 @@ function VideoRecorder() {
                       <input
                         type="checkbox"
                         checked={enableLiveStreaming}
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const nextValue = e.target.checked
                           setEnableLiveStreaming(nextValue)
                           if (!nextValue) {
                             setShowLarixModal(false)
                             setHasCopiedBroadcastId(false)
                             setRtmpsComboCopied(false)
-                          } else if (isMobileDevice()) {
+                          } else {
+                            await ensureStreamForLiveToggle()
+                            if (isMobileDevice()) {
                             setShowLarixModal(true)
+                            }
                           }
                         }}
                         disabled={!eventTeamId || !eventSeasonId}
@@ -2538,10 +2575,10 @@ function VideoRecorder() {
                       setHasCopiedBroadcastId(true)
                       setTimeout(() => setRtmpsComboCopied(false), 2000)
                     }}
-                    disabled={!rtmpsKey}
+                    disabled={!rtmpsKey || isCreatingStream}
                     className="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold text-base transition-colors disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
                   >
-                    {rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
+                    {isCreatingStream ? 'Generating...' : rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
                   </button>
                   <button
                     onClick={() => setShowLarixModal(false)}
