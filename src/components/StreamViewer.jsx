@@ -9,6 +9,7 @@ function StreamViewer({ streamId, isPreview = false }) {
   const [error, setError] = useState(null)
   const videoRef = useRef(null)
   const hlsRef = useRef(null)
+  const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
 
   useEffect(() => {
     let cancelled = false
@@ -37,11 +38,19 @@ function StreamViewer({ streamId, isPreview = false }) {
           query = query.eq('cloudflare_live_input_id', streamId)
         }
 
-        const { data, error } = await query.single()
+        const { data, error } = await query.maybeSingle()
 
         if (error) {
           console.error('Stream load error:', error)
           // If stream doesn't exist, still allow viewing (might be starting soon)
+          if (!cancelled) {
+            setStreamInfo({ id: streamId, is_active: false })
+            setIsLive(false)
+          }
+          return
+        }
+
+        if (!data) {
           if (!cancelled) {
             setStreamInfo({ id: streamId, is_active: false })
             setIsLive(false)
@@ -264,31 +273,35 @@ function StreamViewer({ streamId, isPreview = false }) {
       const video = videoRef.current
       if (!video) return
 
+      const playbackUrl = streamInfo.cloudflare_playback_url
+      const isMuxStream =
+        VIDEO_PROVIDER === 'mux' ||
+        (typeof playbackUrl === 'string' && playbackUrl.includes('stream.mux.com'))
+
       // Build list of candidate URLs to poll
       const candidateUrls = []
       
       // 1. Prioritize the exact playback URL from the database
-      if (streamInfo.cloudflare_playback_url) {
-        candidateUrls.push(streamInfo.cloudflare_playback_url)
+      if (playbackUrl) {
+        candidateUrls.push(playbackUrl)
       }
       
       // 2. Add variants of the playback URL if we have one
-      if (streamInfo.cloudflare_playback_url) {
-        const url = streamInfo.cloudflare_playback_url
-        if (!url.includes('mode=live')) {
-          candidateUrls.push(url.includes('?') ? `${url}&mode=live` : `${url}?mode=live`)
+      if (playbackUrl && !isMuxStream) {
+        if (!playbackUrl.includes('mode=live')) {
+          candidateUrls.push(playbackUrl.includes('?') ? `${playbackUrl}&mode=live` : `${playbackUrl}?mode=live`)
         }
       }
 
       // 3. Fallback candidates using the liveInputId (less reliable but good to have)
       const liveInputId = streamInfo.cloudflare_live_input_id?.trim()
-      if (liveInputId) {
+      if (liveInputId && !isMuxStream) {
         candidateUrls.push(`https://customer-iwica243j9k9zbs3.cloudflarestream.com/${liveInputId}/manifest/video.m3u8`)
         candidateUrls.push(`https://videodelivery.net/${liveInputId}/manifest/video.m3u8`)
       }
 
       // 4. Query Cloudflare API to get the actual current playback URL (if liveInputId exists)
-      if (liveInputId) {
+      if (liveInputId && !isMuxStream) {
         try {
           const CF_ACCOUNT_ID = "8ddadc04f6a8c0fd32db2fae084995dc"
           const CF_API_TOKEN = "ZgCaabkk8VGTVH6ZVuIJLgXEPbN2426yM-vtY-uT"
@@ -467,13 +480,17 @@ function StreamViewer({ streamId, isPreview = false }) {
       const readyUrl = await waitForManifest()
       if (!readyUrl) {
         console.warn('⚠️ Manifest not ready after extended polling')
-        const browserInfo = getBrowserInfo()
-        // Cloudflare Stream live broadcasts published via WebRTC don't generate HLS manifests during live
-        // Mobile devices and Safari can't play live WebRTC-published streams
-        if (browserInfo.isSafari || browserInfo.isMobile || browserInfo.isIOS) {
-          setError('Live streaming is not available on this device. Cloudflare Stream live broadcasts published via WebRTC only support WebRTC playback, which is not available on mobile devices or Safari. Please use a desktop browser (Chrome, Firefox, or Edge) to view live streams. The recorded video will be available after the stream ends.')
+        if (isMuxStream) {
+          setError('Stream is not live yet. Start the broadcast in OBS, then refresh this page.')
         } else {
-          setError('Stream manifest is not ready yet. Please try again shortly.')
+          const browserInfo = getBrowserInfo()
+          // Cloudflare Stream live broadcasts published via WebRTC don't generate HLS manifests during live
+          // Mobile devices and Safari can't play live WebRTC-published streams
+          if (browserInfo.isSafari || browserInfo.isMobile || browserInfo.isIOS) {
+            setError('Live streaming is not available on this device. Cloudflare Stream live broadcasts published via WebRTC only support WebRTC playback, which is not available on mobile devices or Safari. Please use a desktop browser (Chrome, Firefox, or Edge) to view live streams. The recorded video will be available after the stream ends.')
+          } else {
+            setError('Stream manifest is not ready yet. Please try again shortly.')
+          }
         }
         return
       }

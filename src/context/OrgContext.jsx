@@ -18,6 +18,7 @@ export function OrgProvider({ children }) {
   
   // KILL SWITCH: Disable legacy Supabase video features during migration to Cloudflare
   const USE_CLOUDFLARE_PIVOT = true
+  const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
 
   // Find all organizations where user is a member (owner OR player/coach/parent)
   const findUserOrganizations = async (userId) => {
@@ -1706,6 +1707,70 @@ export function OrgProvider({ children }) {
     }
 
     try {
+      if (VIDEO_PROVIDER === 'mux') {
+        const contentType = videoBlob.type || 'application/octet-stream'
+        const { data, error } = await supabase.functions.invoke('mux-video', {
+          body: {
+            action: 'get-upload-url',
+            userId,
+            gameId,
+            contentType
+          }
+        })
+
+        if (error) throw error
+
+        if (!data?.uploadUrl || !data?.uploadId) {
+          throw new Error('Mux upload URL response missing required fields')
+        }
+
+        const uploadResponse = await fetch(data.uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': contentType
+          },
+          body: videoBlob
+        })
+
+        if (!uploadResponse.ok) {
+          const errText = await uploadResponse.text().catch(() => '')
+          throw new Error(`Mux upload failed: ${uploadResponse.status} ${errText}`)
+        }
+
+        // Poll for asset/playback readiness
+        const pollForAsset = async () => {
+          const maxAttempts = 15
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const { data: assetData, error: assetError } = await supabase.functions.invoke('mux-video', {
+              body: {
+                action: 'get-upload-asset',
+                uploadId: data.uploadId
+              }
+            })
+
+            if (!assetError && assetData?.playbackUrl) {
+              return assetData
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
+          return null
+        }
+
+        const assetData = await pollForAsset()
+
+        if (!assetData?.playbackUrl) {
+          throw new Error('Mux asset is still processing. Try again in a few minutes.')
+        }
+
+        return {
+          url: assetData.playbackUrl,
+          muxAssetId: assetData.assetId,
+          muxPlaybackId: assetData.playbackId,
+          thumbnailUrl: assetData.thumbnailUrl
+        }
+      }
+
       console.log('☁️ [Cloudflare] Requesting Direct Upload URL...')
       
       // Keys from user input - DIRECT CLIENT MODE
@@ -1789,18 +1854,18 @@ export function OrgProvider({ children }) {
 
   // 3. Add Video Recording Record (Cloudflare & Database)
   const addVideoRecording = async (recordingData) => {
-    console.log('💾 addVideoRecording (Cloudflare Mode):', recordingData)
+    console.log(`💾 addVideoRecording (${VIDEO_PROVIDER} Mode):`, recordingData)
 
     // For Cloudflare, the 'videoUrl' passed in is likely the object returned from uploadVideoToStorage
     let videoUrl = recordingData.videoUrl
     let cloudflareUid = null
     let thumbnailUrl = recordingData.thumbnailUrl
 
-    // If videoUrl is an object (from our new uploadVideoToStorage return), extract details
+    // If videoUrl is an object (from uploadVideoToStorage), extract details
     if (typeof videoUrl === 'object' && videoUrl !== null) {
-      cloudflareUid = videoUrl.cloudflareUid
+      cloudflareUid = videoUrl.cloudflareUid || videoUrl.muxAssetId || null
       thumbnailUrl = videoUrl.thumbnailUrl || thumbnailUrl
-      videoUrl = videoUrl.url // The HLS playback URL
+      videoUrl = videoUrl.url || videoUrl
     }
 
     if (!user?.id || !recordingData.gameId) {
@@ -1867,6 +1932,15 @@ export function OrgProvider({ children }) {
     if (USE_MOCK) return { id: 'mock-stream', streamUrl: '#' }
 
     try {
+      // Generate UUIDv4 for stream IDs (robust polyfill)
+      const generateUUID = () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8)
+          return v.toString(16)
+        })
+      }
+
       // FIRST: Check if there's already an active stream for this game
       const { data: existingStream } = await supabase
         .from('icepulse_streams')
@@ -1955,6 +2029,71 @@ export function OrgProvider({ children }) {
             rtmpsUrl: inactiveStream.rtmps_url || '',
             rtmpsKey: inactiveStream.cloudflare_stream_key || ''
           }
+        }
+      }
+
+      if (VIDEO_PROVIDER === 'mux') {
+        console.log('☁️ [Mux] Creating live stream...')
+        const { data, error } = await supabase.functions.invoke('mux-video', {
+          body: {
+            action: 'create-live-input',
+            userId: user.id,
+            gameId
+          }
+        })
+
+        if (error) {
+          throw error
+        }
+
+        const liveInputId = data?.liveStreamId || null
+        const rtmpsKey = data?.streamKey || ''
+        const rtmpsUrl = data?.rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
+        const playbackUrl = data?.playbackUrl || ''
+
+        const streamId = generateUUID()
+        const streamRecordToInsert = {
+          id: streamId,
+          game_id: gameId,
+          created_by: user.id,
+          is_active: true,
+          cloudflare_live_input_id: liveInputId,
+          cloudflare_stream_key: rtmpsKey,
+          cloudflare_playback_url: playbackUrl,
+          cloudflare_whip_url: null,
+          rtmps_url: rtmpsUrl || null
+        }
+
+        console.log('📝 [DATABASE] Inserting stream record:', JSON.stringify(streamRecordToInsert, null, 2))
+
+        const { data: streamRecord, error: dbError } = await supabase
+          .from('icepulse_streams')
+          .insert(streamRecordToInsert)
+          .select()
+          .maybeSingle()
+
+        if (dbError) {
+          console.error('❌ Could not save stream to DB:', dbError)
+          if (dbError.code === '42501' || dbError.message?.includes('violates row-level security')) {
+            console.log('🔄 Retrying insert without select...')
+            const { error: retryError } = await supabase
+              .from('icepulse_streams')
+              .insert(streamRecordToInsert)
+
+            if (retryError) console.error('❌ Retry failed:', retryError)
+            else console.log('✅ Retry insert successful (blind insert)')
+          }
+        } else {
+          console.log('✅ Stream saved to DB:', streamRecord?.id || streamId)
+        }
+
+        return {
+          id: streamId,
+          liveInputId: liveInputId,
+          streamUrl: playbackUrl,
+          whipUrl: '',
+          rtmpsUrl: rtmpsUrl,
+          rtmpsKey: rtmpsKey
         }
       }
 
@@ -2065,21 +2204,12 @@ export function OrgProvider({ children }) {
         console.warn('⚠️ Using generic playback URL fallback:', playbackUrl)
       }
 
-      if (!whipUrl) {
-         console.error('❌ Cloudflare did not return a WHIP URL. WebRTC broadcasting requires this.', result)
+      if (VIDEO_PROVIDER === 'cloudflare' && !whipUrl) {
+        console.error('❌ Cloudflare did not return a WHIP URL. WebRTC broadcasting requires this.', result)
       }
 
       // Store in icepulse_streams for reference
       // Use maybeSingle() or select() without single() to avoid errors if RLS blocks read-back immediately
-      
-      // Generate UUIDv4 for ID (robust polyfill)
-      const generateUUID = () => {
-        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-          return v.toString(16);
-        });
-      };
       
       // Build final record
       const streamId = generateUUID()

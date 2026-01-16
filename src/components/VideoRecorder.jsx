@@ -410,7 +410,11 @@ function VideoRecorder() {
   const whipPeerConnectionRef = useRef(null) // Store WebRTC connection for broadcasting
   const [streamId, setStreamId] = useState(null)
   const [streamUrl, setStreamUrl] = useState(null)
+  const [rtmpsUrl, setRtmpsUrl] = useState(null)
+  const [rtmpsKey, setRtmpsKey] = useState(null)
   const [urlCopied, setUrlCopied] = useState(false)
+  const [rtmpsUrlCopied, setRtmpsUrlCopied] = useState(false)
+  const [rtmpsKeyCopied, setRtmpsKeyCopied] = useState(false)
   const [recentlyStoppedStream, setRecentlyStoppedStream] = useState(null)
   const streamChunkIndexRef = useRef(0)
   const streamChunkIntervalRef = useRef(null)
@@ -854,6 +858,10 @@ function VideoRecorder() {
         if (streamData.whipUrl) {
            whipUrlRef.current = streamData.whipUrl
         }
+        if (streamData.rtmpsKey) {
+          setRtmpsKey(streamData.rtmpsKey)
+          setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
+        }
         console.log('✅ Stream setup complete:', streamData.id)
       } else {
         console.warn('⚠️ Stream created but no ID returned')
@@ -1103,6 +1111,10 @@ function VideoRecorder() {
         // ALWAYS use the app viewer URL, never the raw Cloudflare URL
         const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
         setStreamUrl(appViewerUrl)
+        if (streamData.rtmpsKey) {
+          setRtmpsKey(streamData.rtmpsKey)
+          setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
+        }
         console.log('✅ Stream setup complete:', streamData.id)
       } else {
         console.log('ℹ️ No stream created (streaming disabled or not available)')
@@ -1330,7 +1342,7 @@ function VideoRecorder() {
         // This ensures the stream is reactivated and the URL is updated
         try {
            const gameId = currentGameIdRef.current || selectedGameId
-           console.log('🔄 Creating/reactivating Cloudflare stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
+           console.log('🔄 Creating/reactivating live stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
            const streamData = await createStream(gameId, streamIdToResume)
                if (streamData) {
                setStreamId(streamData.id)
@@ -1338,7 +1350,11 @@ function VideoRecorder() {
                // Cloudflare raw URL (m3u8) cannot be played directly in browser
                const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
                setStreamUrl(appViewerUrl)
-             // Clear recently stopped stream since we're resuming
+            if (streamData.rtmpsKey) {
+              setRtmpsKey(streamData.rtmpsKey)
+              setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
+            }
+            // Clear recently stopped stream since we're resuming
              if (streamIdToResume) {
                setRecentlyStoppedStream(null)
              }
@@ -1637,6 +1653,11 @@ function VideoRecorder() {
         
         if (result) {
           console.log('✅ Recording saved successfully to database:', result)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('icepulse:video-recorded', { detail: { gameId: gameIdToUse } })
+            )
+          }
       } else {
           console.error('❌ addVideoRecording returned null - video was NOT saved!')
           setError('Video recording failed to save to database. Please check console for details.')
@@ -2320,6 +2341,61 @@ function VideoRecorder() {
                       <p className="text-xs text-gray-400 mt-2">
                         Share this URL with viewers - no login required to watch!
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {rtmpsUrl && rtmpsKey && (
+                  <div className="bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 border border-emerald-500/40 rounded-lg p-4 space-y-3">
+                    <div>
+                      <label className="block text-emerald-300 font-semibold mb-2 text-sm">
+                        Mux RTMPS (Use OBS)
+                      </label>
+                      <p className="text-xs text-emerald-200/80">
+                        Paste these into your encoder to go live.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={rtmpsUrl}
+                          readOnly
+                          className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
+                          onClick={(e) => e.target.select()}
+                        />
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(rtmpsUrl)
+                            setRtmpsUrlCopied(true)
+                            setTimeout(() => setRtmpsUrlCopied(false), 2000)
+                          }}
+                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
+                          title="Copy RTMPS URL"
+                        >
+                          {rtmpsUrlCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={rtmpsKey}
+                          readOnly
+                          className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
+                          onClick={(e) => e.target.select()}
+                        />
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(rtmpsKey)
+                            setRtmpsKeyCopied(true)
+                            setTimeout(() => setRtmpsKeyCopied(false), 2000)
+                          }}
+                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
+                          title="Copy Stream Key"
+                        >
+                          {rtmpsKeyCopied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

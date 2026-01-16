@@ -28,5 +28,8 @@ dist-ssr
 .env.local
 .env.production
 
+# Supabase CLI temp files
+supabase/.temp/
+
 # Admin utilities (contains service role key usage)
 # Note: The files themselves are safe, but be careful with .env values

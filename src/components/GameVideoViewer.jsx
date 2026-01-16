@@ -20,6 +20,7 @@ function GameVideoViewer() {
   const [error, setError] = useState(null)
   const [selectedVideoId, setSelectedVideoId] = useState(null)
   const [deletingVideoId, setDeletingVideoId] = useState(null)
+  const [refreshToken, setRefreshToken] = useState(0)
 
   // Get selected game
   const selectedGame = organization?.games?.find(g => g.id === selectedGameId)
@@ -70,7 +71,19 @@ function GameVideoViewer() {
     }
 
     loadVideos()
-  }, [selectedGameId, getGameVideos])
+  }, [selectedGameId, getGameVideos, refreshToken])
+
+  useEffect(() => {
+    const handleVideoRecorded = (event) => {
+      const recordedGameId = event?.detail?.gameId
+      if (recordedGameId && recordedGameId === selectedGameId) {
+        setRefreshToken((token) => token + 1)
+      }
+    }
+
+    window.addEventListener('icepulse:video-recorded', handleVideoRecorded)
+    return () => window.removeEventListener('icepulse:video-recorded', handleVideoRecorded)
+  }, [selectedGameId])
   const getEventLabel = (video) => {
     const desc = (video?.description || '').toLowerCase()
     if (desc.startsWith('practice')) return 'Practice'
