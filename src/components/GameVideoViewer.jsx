@@ -47,8 +47,14 @@ function GameVideoViewer() {
         }
 
         // Use getGameVideos from OrgContext (handles database query)
-        console.log('🎥 Loading videos for game:', selectedGameId)
-        const gameVideos = await getGameVideos(selectedGameId)
+        const teamId = selectedGame?.teamId || selectedGame?.team_id || null
+        const seasonId = selectedGame?.seasonId || selectedGame?.season_id || null
+        console.log('🎥 Loading videos for team/season:', { selectedGameId, teamId, seasonId })
+        const gameVideos = await getGameVideos({
+          gameId: selectedGameId,
+          teamId,
+          seasonId
+        })
         console.log('🎥 Videos loaded:', {
           count: gameVideos?.length || 0,
           videos: gameVideos,

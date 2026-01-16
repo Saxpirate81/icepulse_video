@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { Wifi, WifiOff, ArrowLeft, Calendar, Dumbbell, Sparkles } from 'lucide-react'
+import Hls from 'hls.js'
 import StreamViewer from './StreamViewer'
 
 // Preview component for grid view - minimal, muted video
@@ -10,67 +11,37 @@ function StreamPreview({ streamId }) {
   useEffect(() => {
     let cancelled = false
     
-    // Setup WebRTC for preview (same as StreamViewer but minimal)
+    // Setup HLS preview (Mux-compatible)
     const setupPreview = async () => {
       if (cancelled) return
       
-      // Load stream info to get playback URL
       const { data } = await supabase
         .from('icepulse_streams')
-        .select('cloudflare_live_input_id')
+        .select('cloudflare_playback_url')
         .eq('id', streamId)
-        .single()
+        .maybeSingle()
       
-      if (!data?.cloudflare_live_input_id || cancelled) return
-      
-      // Get WebRTC playback URL from Cloudflare
-      const CF_ACCOUNT_ID = "8ddadc04f6a8c0fd32db2fae084995dc"
-      const CF_API_TOKEN = "ZgCaabkk8VGTVH6ZVuIJLgXEPbN2426yM-vtY-uT"
+      const playbackUrl = data?.cloudflare_playback_url
+      if (!playbackUrl || cancelled) return
       
       try {
-        const cfResponse = await fetch(
-          `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/stream/live_inputs/${data.cloudflare_live_input_id}`,
-          {
-            headers: { 'Authorization': `Bearer ${CF_API_TOKEN}` }
-          }
-        )
-        
-        if (cfResponse.ok && !cancelled) {
-          const cfData = await cfResponse.json()
-          const webRTCPlaybackUrl = cfData?.result?.webRTCPlayback?.url
-          
-          if (webRTCPlaybackUrl && videoRef.current && !cancelled) {
-            const pc = new RTCPeerConnection({
-              iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-            })
-            
-            pc.ontrack = (event) => {
-              if (videoRef.current && !cancelled) {
-                videoRef.current.srcObject = event.streams[0]
-                videoRef.current.play().catch(() => {})
-              }
-            }
-            
-            const offer = await pc.createOffer({
-              offerToReceiveVideo: true,
-              offerToReceiveAudio: true
-            })
-            await pc.setLocalDescription(offer)
-            
-            const response = await fetch(webRTCPlaybackUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/sdp' },
-              body: offer.sdp
-            })
-            
-            if (response.ok && !cancelled) {
-              const answerSdp = await response.text()
-              await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
-              if (videoRef.current) {
-                videoRef.current._webrtcPc = pc
-              }
-            }
-          }
+        const video = videoRef.current
+        if (!video || cancelled) return
+
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = playbackUrl
+          video.play().catch(() => {})
+          return
+        }
+
+        if (Hls.isSupported()) {
+          const hls = new Hls({ lowLatencyMode: true })
+          hls.loadSource(playbackUrl)
+          hls.attachMedia(video)
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.play().catch(() => {})
+          })
+          video._hls = hls
         }
       } catch (e) {
         if (!cancelled) {
@@ -83,9 +54,9 @@ function StreamPreview({ streamId }) {
     
     return () => {
       cancelled = true
-      if (videoRef.current?._webrtcPc) {
-        videoRef.current._webrtcPc.close()
-        videoRef.current._webrtcPc = null
+      if (videoRef.current?._hls) {
+        videoRef.current._hls.destroy()
+        videoRef.current._hls = null
       }
       if (videoRef.current?.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(track => track.stop())
@@ -106,7 +77,7 @@ function StreamPreview({ streamId }) {
   )
 }
 
-function MultiStreamViewer({ organizationId, organizationName }) {
+function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   const [streams, setStreams] = useState([])
   const [selectedStreamId, setSelectedStreamId] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -145,7 +116,7 @@ function MultiStreamViewer({ organizationId, organizationName }) {
     const loadStreams = async () => {
       try {
         // Fetch all active streams
-        const { data, error } = await supabase
+        let query = supabase
           .from('icepulse_streams')
           .select(`
             *,
@@ -157,6 +128,12 @@ function MultiStreamViewer({ organizationId, organizationName }) {
           `)
           .eq('is_active', true)
           .order('created_at', { ascending: false })
+        
+        if (gameId) {
+          query = query.eq('game_id', gameId)
+        }
+
+        const { data, error } = await query
 
         if (error) {
           console.error('Error loading streams:', error)
@@ -192,7 +169,7 @@ function MultiStreamViewer({ organizationId, organizationName }) {
     // Poll for new streams every 5 seconds
     const interval = setInterval(loadStreams, 5000)
     return () => clearInterval(interval)
-  }, [resolvedOrgId, organizationName])
+  }, [resolvedOrgId, organizationName, gameId])
 
   // If a stream is selected, show full screen viewer
   if (selectedStreamId) {

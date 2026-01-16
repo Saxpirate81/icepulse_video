@@ -7,6 +7,7 @@ function StreamViewer({ streamId, isPreview = false }) {
   const [isLive, setIsLive] = useState(false)
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
+  const [retryToken, setRetryToken] = useState(0)
   const videoRef = useRef(null)
   const hlsRef = useRef(null)
   const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
@@ -481,7 +482,7 @@ function StreamViewer({ streamId, isPreview = false }) {
       if (!readyUrl) {
         console.warn('⚠️ Manifest not ready after extended polling')
         if (isMuxStream) {
-          setError('Stream is not live yet. Start the broadcast in OBS, then refresh this page.')
+          setError(null)
         } else {
           const browserInfo = getBrowserInfo()
           // Cloudflare Stream live broadcasts published via WebRTC don't generate HLS manifests during live
@@ -496,6 +497,15 @@ function StreamViewer({ streamId, isPreview = false }) {
       }
 
       // Check for native HLS support (Safari)
+      const scheduleRetry = (delayMs = 3000) => {
+        if (cancelled) return
+        setTimeout(() => {
+          if (!cancelled) {
+            setRetryToken((token) => token + 1)
+          }
+        }, delayMs)
+      }
+
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = readyUrl
         video.addEventListener('loadedmetadata', () => {
@@ -510,7 +520,15 @@ function StreamViewer({ streamId, isPreview = false }) {
         })
         video.addEventListener('error', (e) => {
           console.error('❌ HLS Video error:', e)
-          setError('Failed to play video stream. Please try refreshing the page.')
+          setIsLive(false)
+          setError(null)
+          scheduleRetry()
+        })
+        video.addEventListener('ended', () => {
+          console.log('ℹ️ Stream ended, waiting for restart...')
+          setIsLive(false)
+          setError(null)
+          scheduleRetry()
         })
         video.play().catch(e => {
           console.warn('Autoplay failed:', e)
@@ -546,21 +564,33 @@ function StreamViewer({ streamId, isPreview = false }) {
           setIsLive(true)
           setError(null)
         })
+        video.addEventListener('ended', () => {
+          console.log('ℹ️ Stream ended, waiting for restart...')
+          setIsLive(false)
+          setError(null)
+          scheduleRetry()
+        })
 
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.warn('HLS Network error, recovering...', data)
-                hls.startLoad()
+                setIsLive(false)
+                setError(null)
+                scheduleRetry()
                 break
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.warn('HLS Media error, recovering...', data)
-                hls.recoverMediaError()
+                setIsLive(false)
+                setError(null)
+                scheduleRetry()
                 break
               default:
                 console.error('HLS Fatal error:', data)
-                setError('Failed to load video stream. Please try refreshing the page.')
+                setIsLive(false)
+                setError(null)
+                scheduleRetry()
                 hls.destroy()
                 break
             }
@@ -592,7 +622,7 @@ function StreamViewer({ streamId, isPreview = false }) {
         videoRef.current.srcObject = null
       }
     }
-  }, [streamInfo?.cloudflare_playback_url, isPreview])
+  }, [streamInfo?.cloudflare_playback_url, isPreview, retryToken])
 
   // Don't show error screen - show waiting UI instead
   // Errors are handled gracefully with retries
@@ -629,34 +659,20 @@ function StreamViewer({ streamId, isPreview = false }) {
   const eventDisplay = getEventDisplay()
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden">
-      {/* Contemporary Header with Live Indicator */}
-      <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/95 via-black/80 to-transparent backdrop-blur-sm p-3 sm:p-4">
+    <div className="h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="flex-shrink-0 z-20 bg-black/85 backdrop-blur-sm p-2 sm:p-3">
         {/* Header Image */}
-        {organization?.header_image_url && (
-          <div className="mb-3 -mx-3 sm:-mx-4">
-            <img
-              src={organization.header_image_url}
-              alt="Organization header"
-              className="w-full h-auto max-h-24 sm:max-h-32 object-contain"
-            />
-          </div>
-        )}
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Team Logo - Note: logo_url column needs to be added to icepulse_teams table first */}
-            {/* {team?.logo_url && (
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            {organization?.header_image_url && (
               <img
-                src={team.logo_url}
-                alt={team.name || 'Team logo'}
+                src={organization.header_image_url}
+                alt={team?.name ? `${team.name} logo` : 'Team logo'}
                 className="object-contain flex-shrink-0"
-                style={{ 
-                  height: 'calc(1.5rem + 0.75rem + 0.125rem)',
-                  maxHeight: 'calc(1.5rem + 0.75rem + 0.125rem)',
-                  width: 'auto'
-                }}
+                style={{ height: '28px', width: 'auto' }}
               />
-            )} */}
+            )}
           <div className="flex-1 min-w-0">
             <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold truncate bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
               {team?.name || 'IcePulse Stream'}
@@ -691,8 +707,8 @@ function StreamViewer({ streamId, isPreview = false }) {
         </div>
       </div>
 
-      {/* Video Player - Full Screen */}
-      <div className="w-full h-screen bg-black flex items-center justify-center pt-16 sm:pt-20 relative">
+      {/* Video Player */}
+      <div className="w-full flex-1 bg-black flex items-center justify-center relative min-h-0 overflow-hidden">
         {/* Video container - flip video content but keep controls normal using wrapper approach */}
         <div className="w-full h-full relative" style={{ transform: 'scaleX(-1)' }}>
         <video

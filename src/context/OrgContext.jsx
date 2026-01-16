@@ -2087,6 +2087,52 @@ export function OrgProvider({ children }) {
           console.log('✅ Stream saved to DB:', streamRecord?.id || streamId)
         }
 
+        // Create or update a placeholder video record so the stream appears immediately in Event Videos.
+        if (liveInputId) {
+          try {
+            const { data: existingVideo } = await supabase
+              .from('icepulse_video_recordings')
+              .select('id')
+              .eq('cloudflare_uid', liveInputId)
+              .maybeSingle()
+
+            if (!existingVideo) {
+              let gameRow = organization?.games?.find(g => g.id === gameId) || null
+              if (!gameRow) {
+                const { data: gameData } = await supabase
+                  .from('icepulse_games')
+                  .select('id, team_id, season_id')
+                  .eq('id', gameId)
+                  .single()
+                if (gameData) {
+                  gameRow = { id: gameData.id, teamId: gameData.team_id, seasonId: gameData.season_id }
+                }
+              }
+
+              await supabase
+                .from('icepulse_video_recordings')
+                .insert({
+                  game_id: gameId,
+                  user_id: user.id,
+                  team_id: gameRow?.teamId || null,
+                  season_id: gameRow?.seasonId || null,
+                  video_url: playbackUrl,
+                  cloudflare_uid: liveInputId,
+                  cloudflare_status: 'processing',
+                  thumbnail_url: null,
+                  duration_seconds: null,
+                  file_size_bytes: null,
+                  recording_start_timestamp: new Date().toISOString(),
+                  recording_type: 'full_game',
+                  description: 'Live stream (processing)',
+                  upload_status: 'processing'
+                })
+            }
+          } catch (e) {
+            console.warn('⚠️ Could not create live video placeholder:', e)
+          }
+        }
+
         return {
           id: streamId,
           liveInputId: liveInputId,
@@ -2433,9 +2479,13 @@ export function OrgProvider({ children }) {
   const [uploadQueue, setUploadQueue] = useState([])
   const [isUploading, setIsUploading] = useState(false)
 
-  // Get all videos for a game
-  const getGameVideos = async (gameId) => {
-    if (!gameId) return []
+  // Get all videos for a game or team/season
+  const getGameVideos = async (params) => {
+    const gameId = typeof params === 'string' ? params : params?.gameId
+    const teamId = typeof params === 'object' ? params?.teamId : null
+    const seasonId = typeof params === 'object' ? params?.seasonId : null
+
+    if (!gameId && !teamId && !seasonId) return []
 
     // MOCK MODE
     if (USE_MOCK) {
@@ -2443,18 +2493,26 @@ export function OrgProvider({ children }) {
     }
 
     try {
-      console.log('🎥 Starting SAFE query for game:', gameId)
+      console.log('🎥 Starting SAFE query for videos:', { gameId, teamId, seasonId })
       
       // SAFER APPROACH: Use simple query without join first to avoid crashing database
       // The join with profiles can be very slow with complex RLS policies
       // We'll fetch user info separately if needed, or use a simpler approach
-      const simpleQueryPromise = supabase
+      let simpleQuery = supabase
         .from('icepulse_video_recordings')
         .select('id, game_id, user_id, video_url, thumbnail_url, recording_start_timestamp, recording_end_timestamp, duration_seconds, recording_type, description, upload_status, created_at')
-        .eq('game_id', gameId)
-        .eq('upload_status', 'completed')
+        .in('upload_status', ['completed', 'processing'])
         .order('recording_start_timestamp', { ascending: true })
         .limit(50) // Reduced limit to prevent crashes
+
+      if (gameId) {
+        simpleQuery = simpleQuery.eq('game_id', gameId)
+      } else {
+        if (teamId) simpleQuery = simpleQuery.eq('team_id', teamId)
+        if (seasonId) simpleQuery = simpleQuery.eq('season_id', seasonId)
+      }
+
+      const simpleQueryPromise = simpleQuery
 
       // Short timeout to prevent database crashes
       const timeoutPromise = new Promise((_, reject) => {
@@ -2491,6 +2549,8 @@ export function OrgProvider({ children }) {
 
       console.log('🎥 getGameVideos success:', {
         gameId,
+        teamId,
+        seasonId,
         videoCount: data?.length || 0,
         videos: data?.map(v => ({ id: v.id, status: v.upload_status, user: v.user?.name })) || []
       })

@@ -28,11 +28,17 @@ function AppContent() {
       // Check for multi-stream route: /streams or /org/[orgIdOrName]/streams
       const multiMatch = path.match(/^\/org\/([a-zA-Z0-9_-]+)\/streams$/)
       const allStreamsMatch = path.match(/^\/streams$/)
+      const gameStreamsMatch = path.match(/^\/game\/([a-zA-Z0-9_-]+)\/streams$/)
       
       if (multiMatch) {
         setViewMode('multi')
         // Could be UUID or organization name - MultiStreamViewer will resolve it
         setOrganizationId(multiMatch[1])
+        setStreamId(null)
+        return
+      } else if (gameStreamsMatch) {
+        setViewMode('multi')
+        setOrganizationId(null)
         setStreamId(null)
         return
       } else if (allStreamsMatch) {
@@ -72,10 +78,13 @@ function AppContent() {
   if (viewMode === 'multi') {
     // Check if organizationId looks like a UUID or a name
     const isUUID = organizationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId)
+    const gameMatch = window.location.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/streams$/)
+    const gameId = gameMatch ? gameMatch[1] : null
     return (
       <MultiStreamViewer 
         organizationId={isUUID ? organizationId : null}
         organizationName={!isUUID && organizationId ? organizationId : null}
+        gameId={gameId}
       />
     )
   }

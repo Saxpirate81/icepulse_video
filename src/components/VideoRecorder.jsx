@@ -410,11 +410,15 @@ function VideoRecorder() {
   const whipPeerConnectionRef = useRef(null) // Store WebRTC connection for broadcasting
   const [streamId, setStreamId] = useState(null)
   const [streamUrl, setStreamUrl] = useState(null)
+  const [orgStreamsUrl, setOrgStreamsUrl] = useState(null)
   const [rtmpsUrl, setRtmpsUrl] = useState(null)
   const [rtmpsKey, setRtmpsKey] = useState(null)
   const [urlCopied, setUrlCopied] = useState(false)
   const [rtmpsUrlCopied, setRtmpsUrlCopied] = useState(false)
   const [rtmpsKeyCopied, setRtmpsKeyCopied] = useState(false)
+  const [rtmpsComboCopied, setRtmpsComboCopied] = useState(false)
+  const [hasCopiedBroadcastId, setHasCopiedBroadcastId] = useState(false)
+  const [showLarixModal, setShowLarixModal] = useState(false)
   const [recentlyStoppedStream, setRecentlyStoppedStream] = useState(null)
   const streamChunkIndexRef = useRef(0)
   const streamChunkIntervalRef = useRef(null)
@@ -472,6 +476,24 @@ function VideoRecorder() {
       console.warn('Error enumerating devices:', err)
       return []
     }
+  }
+
+  const getLarixStoreLink = () => {
+    const ua = navigator.userAgent || navigator.vendor || window.opera
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream
+    const isAndroid = /Android/i.test(ua)
+    if (isIOS) {
+      return 'https://apps.apple.com/us/app/larix-broadcaster/id1042474385'
+    }
+    if (isAndroid) {
+      return 'https://play.google.com/store/apps/details?id=com.wmspanel.larix_broadcaster'
+    }
+    return 'https://softvelum.com/larix/'
+  }
+
+  const isMobileDevice = () => {
+    const ua = navigator.userAgent || navigator.vendor || window.opera
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
   }
 
   const requestMediaAccess = async (cameraId = null, facingModeOverride = null) => {
@@ -851,9 +873,12 @@ function VideoRecorder() {
       // Set stream data if we have it
       if (streamData?.id) {
         setStreamId(streamData.id)
-          // ALWAYS use the app viewer URL, never the raw Cloudflare URL
-          const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+        // Use the game stream hub URL (shows all active streams for this game)
+        const appViewerUrl = `${window.location.origin}/game/${eventExistingGameId}/streams`
           setStreamUrl(appViewerUrl)
+        if (organization?.id) {
+          setOrgStreamsUrl(`${window.location.origin}/org/${organization.id}/streams`)
+        }
         // Store WHIP info for broadcasting
         if (streamData.whipUrl) {
            whipUrlRef.current = streamData.whipUrl
@@ -1108,9 +1133,12 @@ function VideoRecorder() {
       // Set stream data if we have it
       if (streamData?.id) {
         setStreamId(streamData.id)
-        // ALWAYS use the app viewer URL, never the raw Cloudflare URL
-        const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+        // Use the game stream hub URL (shows all active streams for this game)
+        const appViewerUrl = `${window.location.origin}/game/${created.id}/streams`
         setStreamUrl(appViewerUrl)
+        if (organization?.id) {
+          setOrgStreamsUrl(`${window.location.origin}/org/${organization.id}/streams`)
+        }
         if (streamData.rtmpsKey) {
           setRtmpsKey(streamData.rtmpsKey)
           setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
@@ -1346,10 +1374,15 @@ function VideoRecorder() {
            const streamData = await createStream(gameId, streamIdToResume)
                if (streamData) {
                setStreamId(streamData.id)
-               // IMPORTANT: Set the APP viewer URL, not the Cloudflare raw URL
-               // Cloudflare raw URL (m3u8) cannot be played directly in browser
-               const appViewerUrl = `${window.location.origin}/stream/${streamData.id}`
+               // Use the game stream hub URL (shows all active streams for this game)
+               const gameIdForUrl = currentGameIdRef.current || selectedGameId
+               const appViewerUrl = gameIdForUrl
+                 ? `${window.location.origin}/game/${gameIdForUrl}/streams`
+                 : `${window.location.origin}/stream/${streamData.id}`
                setStreamUrl(appViewerUrl)
+               if (organization?.id) {
+                 setOrgStreamsUrl(`${window.location.origin}/org/${organization.id}/streams`)
+               }
             if (streamData.rtmpsKey) {
               setRtmpsKey(streamData.rtmpsKey)
               setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
@@ -1951,29 +1984,6 @@ function VideoRecorder() {
                   )
                 })()}
 
-                {/* Streaming Toggle - Show when user has permission and event type is selected */}
-                {hasStreamingPermission && eventType && (
-                  <div className="border-t border-gray-800 pt-4">
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={enableLiveStreaming}
-                        onChange={(e) => setEnableLiveStreaming(e.target.checked)}
-                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                        id="enable-streaming"
-                      />
-                      <div className="flex-1">
-                        <label htmlFor="enable-streaming" className="text-white cursor-pointer">
-                          Enable Live Streaming
-                        </label>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Stream this recording live. Viewers can watch in real-time at the provided URL.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {eventType === 'game' && (() => {
                   const games = organization?.games || []
                   
@@ -2274,8 +2284,52 @@ function VideoRecorder() {
                   </div>
                 )}
 
+                {/* Streaming Toggle - Show when user has permission and required fields are filled */}
+                {hasStreamingPermission && eventType && selectedGameId && (
+                  <div className="border-t border-gray-800 pt-4">
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={enableLiveStreaming}
+                        onChange={(e) => {
+                          const nextValue = e.target.checked
+                          setEnableLiveStreaming(nextValue)
+                          if (nextValue && isMobileDevice()) {
+                            setShowLarixModal(true)
+                          }
+                        }}
+                        disabled={!eventTeamId || !eventSeasonId}
+                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        id="enable-streaming"
+                      />
+                      <div className="flex-1">
+                        <label htmlFor="enable-streaming" className="text-white cursor-pointer">
+                          Enable Live Streaming
+                        </label>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Stream this recording live. Viewers can watch in real-time at the provided URL.
+                        </p>
+                        {(!eventTeamId || !eventSeasonId) && (
+                          <p className="text-xs text-yellow-400 mt-1">
+                            Select a team and season to enable live streaming.
+                          </p>
+                        )}
+                        {enableLiveStreaming && isMobileDevice() && (
+                          <button
+                            type="button"
+                            onClick={() => setShowLarixModal(true)}
+                            className="mt-2 text-xs text-blue-300 hover:text-blue-200"
+                          >
+                            Show Larix setup again
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Stream URL Section - Show after event is saved and stream is created - Positioned prominently */}
-                {streamUrl && selectedGameId && (
+                {orgStreamsUrl && (
                   <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border-2 border-blue-500/50 rounded-lg p-4 space-y-3">
                     <div>
                       <label className="block text-blue-300 font-semibold mb-2 text-sm flex items-center gap-2">
@@ -2283,19 +2337,19 @@ function VideoRecorder() {
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
                         </span>
-                        Live Stream URL
+                        Organization Live Streams URL
                       </label>
                       <div className="flex gap-2">
                         <input
                           type="text"
-                          value={streamUrl}
+                          value={orgStreamsUrl}
                           readOnly
                           className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
                           onClick={(e) => e.target.select()}
                         />
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(streamUrl)
+                            navigator.clipboard.writeText(orgStreamsUrl)
                             setUrlCopied(true)
                             setTimeout(() => setUrlCopied(false), 2000)
                           }}
@@ -2316,12 +2370,12 @@ function VideoRecorder() {
                         </button>
                         <button
                           onClick={() => {
-                            const message = `Watch the live stream: ${streamUrl}`
+                            const message = `Watch live streams: ${orgStreamsUrl}`
                             if (navigator.share) {
                               navigator.share({
-                                title: 'Live Stream',
+                                title: 'Live Streams',
                                 text: message,
-                                url: streamUrl
+                                url: orgStreamsUrl
                               }).catch(() => {
                                 // Fallback to SMS
                                 window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
@@ -2339,7 +2393,7 @@ function VideoRecorder() {
                         </button>
                       </div>
                       <p className="text-xs text-gray-400 mt-2">
-                        Share this URL with viewers - no login required to watch!
+                        Share this URL with families - it always shows all live streams.
                       </p>
                     </div>
                   </div>
@@ -2349,53 +2403,11 @@ function VideoRecorder() {
                   <div className="bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 border border-emerald-500/40 rounded-lg p-4 space-y-3">
                     <div>
                       <label className="block text-emerald-300 font-semibold mb-2 text-sm">
-                        Mux RTMPS (Use OBS)
+                        Mux RTMPS (Use Larix/OBS)
                       </label>
                       <p className="text-xs text-emerald-200/80">
-                        Paste these into your encoder to go live.
+                        Use the Larix popup to copy the combined URL for easier setup.
                       </p>
-                    </div>
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={rtmpsUrl}
-                          readOnly
-                          className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
-                          onClick={(e) => e.target.select()}
-                        />
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(rtmpsUrl)
-                            setRtmpsUrlCopied(true)
-                            setTimeout(() => setRtmpsUrlCopied(false), 2000)
-                          }}
-                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
-                          title="Copy RTMPS URL"
-                        >
-                          {rtmpsUrlCopied ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={rtmpsKey}
-                          readOnly
-                          className="flex-1 bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm font-mono"
-                          onClick={(e) => e.target.select()}
-                        />
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(rtmpsKey)
-                            setRtmpsKeyCopied(true)
-                            setTimeout(() => setRtmpsKeyCopied(false), 2000)
-                          }}
-                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors flex items-center gap-2 flex-shrink-0"
-                          title="Copy Stream Key"
-                        >
-                          {rtmpsKeyCopied ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
                     </div>
                   </div>
                 )}
@@ -2451,6 +2463,110 @@ function VideoRecorder() {
                     {isCreatingEvent ? 'Saving…' : 'Save'}
                     </button>
                   )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showLarixModal && (
+          <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black bg-opacity-70 p-4">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl max-w-lg w-full overflow-hidden shadow-2xl">
+              <div className="p-4 border-b border-gray-800 space-y-3">
+                <h3 className="text-lg font-bold text-white">Go Live from Your Phone</h3>
+                <p className="text-sm text-gray-400">
+                  Mux live streams require an RTMP broadcaster app (Larix recommended).
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => {
+                      if (!rtmpsUrl || !rtmpsKey) return
+                      const combined = rtmpsUrl?.endsWith('/')
+                        ? `${rtmpsUrl}${rtmpsKey}`
+                        : `${rtmpsUrl}/${rtmpsKey}`
+                      if (navigator.clipboard?.writeText) {
+                        navigator.clipboard.writeText(combined)
+                      } else {
+                        const temp = document.createElement('textarea')
+                        temp.value = combined
+                        document.body.appendChild(temp)
+                        temp.select()
+                        document.execCommand('copy')
+                        document.body.removeChild(temp)
+                      }
+                      setRtmpsComboCopied(true)
+                      setHasCopiedBroadcastId(true)
+                      setTimeout(() => setRtmpsComboCopied(false), 2000)
+                    }}
+                    disabled={!rtmpsUrl || !rtmpsKey}
+                    className="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold text-base transition-colors disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  >
+                    {rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
+                  </button>
+                  <button
+                    onClick={() => setShowLarixModal(false)}
+                    disabled={!hasCopiedBroadcastId}
+                    className="flex-1 px-4 py-3 rounded-lg font-semibold text-base transition-colors disabled:bg-gray-700 disabled:text-gray-400 bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed"
+                  >
+                    Go Live
+                  </button>
+                </div>
+              </div>
+              <div className="p-4 space-y-4 text-sm text-gray-200">
+                <div className="space-y-2">
+                  <p className="font-semibold text-white">Step-by-step (Larix)</p>
+                  <ol className="list-decimal list-inside space-y-1 text-gray-300">
+                    <li>Open Larix and tap the + to add a new connection.</li>
+                    <li>Name the connection (e.g., "IcePulse Live").</li>
+                    <li>Tap Settings → Connection, then paste the combined RTMPS URL below.</li>
+                    <li>Save, then tap Start to go live.</li>
+                  </ol>
+                </div>
+                {rtmpsUrl && rtmpsKey && (
+                  <div className="bg-gray-950/70 border border-gray-700 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-gray-300 uppercase tracking-wide">RTMPS URL/Stream Key</span>
+                      <button
+                        onClick={() => {
+                          const combined = rtmpsUrl?.endsWith('/')
+                            ? `${rtmpsUrl}${rtmpsKey}`
+                            : `${rtmpsUrl}/${rtmpsKey}`
+                          navigator.clipboard.writeText(combined)
+                          setRtmpsComboCopied(true)
+                          setTimeout(() => setRtmpsComboCopied(false), 2000)
+                        }}
+                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors"
+                      >
+                        {rtmpsComboCopied ? 'Copied!' : 'Copy Both'}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={rtmpsUrl?.endsWith('/') ? `${rtmpsUrl}${rtmpsKey}` : `${rtmpsUrl}/${rtmpsKey}`}
+                      readOnly
+                      className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-xs font-mono"
+                      onClick={(e) => e.target.select()}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-400">Don’t have Larix to broadcast?</p>
+                  <a
+                    href={getLarixStoreLink()}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition-colors"
+                  >
+                    Get Larix Broadcaster
+                  </a>
+                </div>
+              </div>
+              <div className="p-4 border-t border-gray-800 flex justify-end">
+                <button
+                  onClick={() => setShowLarixModal(false)}
+                  className="px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>
