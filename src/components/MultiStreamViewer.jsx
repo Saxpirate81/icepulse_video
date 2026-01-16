@@ -146,16 +146,27 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
           return
         }
 
+        // Only show live/recent streams (avoid stale ones that never flipped to inactive)
+        const liveWindowMinutes = 5
+        const cutoff = Date.now() - liveWindowMinutes * 60 * 1000
+        const liveOnly = (data || []).filter((stream) => {
+          if (!stream?.is_active) return false
+          const ts = stream.updated_at || stream.created_at
+          if (!ts) return true
+          const time = new Date(ts).getTime()
+          return Number.isNaN(time) ? true : time >= cutoff
+        })
+
         // Filter by organization if resolvedOrgId is provided
         const filteredStreams = resolvedOrgId
-          ? data.filter(stream => {
+          ? liveOnly.filter(stream => {
               const game = stream.icepulse_games
               const org = Array.isArray(game?.icepulse_organizations) 
                 ? game.icepulse_organizations[0] 
                 : game?.icepulse_organizations
               return org?.id === resolvedOrgId
             })
-          : data
+          : liveOnly
 
         setStreams(filteredStreams || [])
       } catch (err) {
