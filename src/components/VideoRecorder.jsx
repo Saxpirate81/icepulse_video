@@ -2479,10 +2479,11 @@ function VideoRecorder() {
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
                     onClick={() => {
-                      if (!rtmpsUrl || !rtmpsKey) return
-                      const combined = rtmpsUrl?.endsWith('/')
-                        ? `${rtmpsUrl}${rtmpsKey}`
-                        : `${rtmpsUrl}/${rtmpsKey}`
+                      if (!rtmpsKey) return
+                      const baseUrl = rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
+                      const combined = baseUrl.endsWith('/')
+                        ? `${baseUrl}${rtmpsKey}`
+                        : `${baseUrl}/${rtmpsKey}`
                       if (navigator.clipboard?.writeText) {
                         navigator.clipboard.writeText(combined)
                       } else {
@@ -2497,7 +2498,7 @@ function VideoRecorder() {
                       setHasCopiedBroadcastId(true)
                       setTimeout(() => setRtmpsComboCopied(false), 2000)
                     }}
-                    disabled={!rtmpsUrl || !rtmpsKey}
+                    disabled={!rtmpsKey}
                     className="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold text-base transition-colors disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed"
                   >
                     {rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
@@ -2527,9 +2528,10 @@ function VideoRecorder() {
                       <span className="text-xs text-gray-300 uppercase tracking-wide">RTMPS URL/Stream Key</span>
                       <button
                         onClick={() => {
-                          const combined = rtmpsUrl?.endsWith('/')
-                            ? `${rtmpsUrl}${rtmpsKey}`
-                            : `${rtmpsUrl}/${rtmpsKey}`
+                          const baseUrl = rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
+                          const combined = baseUrl.endsWith('/')
+                            ? `${baseUrl}${rtmpsKey}`
+                            : `${baseUrl}/${rtmpsKey}`
                           navigator.clipboard.writeText(combined)
                           setRtmpsComboCopied(true)
                           setTimeout(() => setRtmpsComboCopied(false), 2000)
@@ -2541,7 +2543,9 @@ function VideoRecorder() {
                     </div>
                     <input
                       type="text"
-                      value={rtmpsUrl?.endsWith('/') ? `${rtmpsUrl}${rtmpsKey}` : `${rtmpsUrl}/${rtmpsKey}`}
+                      value={(rtmpsUrl || 'rtmps://global-live.mux.com:443/app').endsWith('/')
+                        ? `${rtmpsUrl || 'rtmps://global-live.mux.com:443/app'}${rtmpsKey}`
+                        : `${rtmpsUrl || 'rtmps://global-live.mux.com:443/app'}/${rtmpsKey}`}
                       readOnly
                       className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-xs font-mono"
                       onClick={(e) => e.target.select()}

@@ -82,6 +82,7 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   const [selectedStreamId, setSelectedStreamId] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [resolvedOrgId, setResolvedOrgId] = useState(organizationId)
+  const [showIntro, setShowIntro] = useState(true)
 
   // Resolve organization name to ID if needed
   useEffect(() => {
@@ -111,6 +112,11 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
     
     resolveOrgId()
   }, [organizationId, organizationName])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowIntro(false), 1500)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     const loadStreams = async () => {
@@ -202,6 +208,32 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
     )
   }
 
+  if (showIntro) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center transition-opacity duration-500">
+        <div className="text-center">
+          <div className="logo-flash-container">
+            <img
+              src="/Logo.png"
+              alt="IcePulse Logo"
+              className="logo-flash mx-auto object-contain"
+              onError={(e) => {
+                if (e.target.src.includes('Logo.png')) {
+                  e.target.src = '/logo.png'
+                  return
+                }
+                e.target.style.display = 'none'
+              }}
+            />
+            <div className="hidden text-6xl font-bold text-blue-400">
+              IcePulse
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (streams.length === 0) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center text-white">
@@ -240,18 +272,40 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-black/95 backdrop-blur-sm border-b border-gray-800 p-4">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl sm:text-3xl font-bold mb-2">Live Streams</h1>
-          <p className="text-gray-400 text-sm">{streams.length} active stream{streams.length !== 1 ? 's' : ''}</p>
+      <div className="sticky top-0 z-10 bg-black/60 backdrop-blur-lg border-b border-gray-800/70">
+        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <img
+              src="/Logo.png"
+              alt="IcePulse Logo"
+              className="w-12 h-12 sm:w-14 sm:h-14 object-contain flex-shrink-0"
+              onError={(e) => {
+                if (e.target.src.includes('Logo.png')) {
+                  e.target.src = '/logo.png'
+                  return
+                }
+                e.target.style.display = 'none'
+              }}
+            />
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-3xl font-bold tracking-tight">Live Streams</h1>
+              <p className="text-gray-400 text-sm">
+                {streams.length} active stream{streams.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 text-xs uppercase tracking-widest text-gray-400">
+            Live Now
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+          </div>
         </div>
       </div>
 
       {/* Grid of Streams */}
-      <div className="max-w-7xl mx-auto p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="max-w-7xl mx-auto p-3 sm:p-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
           {streams.map((stream) => {
             const game = stream.icepulse_games
             const team = Array.isArray(game?.icepulse_teams) ? game.icepulse_teams[0] : game?.icepulse_teams
@@ -264,7 +318,7 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
               <div
                 key={stream.id}
                 onClick={() => setSelectedStreamId(stream.id)}
-                className="bg-gray-900 rounded-lg overflow-hidden border border-gray-800 hover:border-blue-500 transition-all cursor-pointer group"
+                className="bg-gray-900/70 rounded-2xl overflow-hidden border border-gray-800/60 hover:border-blue-500/70 transition-all cursor-pointer group shadow-[0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm"
               >
                 {/* Video Preview - Muted, using StreamPreview component */}
                 <div className="relative aspect-video bg-black overflow-hidden">
@@ -292,8 +346,8 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
                 </div>
 
                 {/* Stream Info */}
-                <div className="p-3">
-                  <h3 className="font-semibold text-white mb-1 truncate">
+                <div className="p-4">
+                  <h3 className="font-semibold text-white mb-1 truncate text-sm sm:text-base">
                     {formatEventLabel(game)}
                   </h3>
                   {team && (

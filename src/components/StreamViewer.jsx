@@ -8,9 +8,15 @@ function StreamViewer({ streamId, isPreview = false }) {
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
   const [retryToken, setRetryToken] = useState(0)
+  const [showIntro, setShowIntro] = useState(true)
   const videoRef = useRef(null)
   const hlsRef = useRef(null)
   const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowIntro(false), 1500)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -626,6 +632,34 @@ function StreamViewer({ streamId, isPreview = false }) {
 
   // Don't show error screen - show waiting UI instead
   // Errors are handled gracefully with retries
+
+  if (showIntro) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center transition-opacity duration-500">
+        <div className="text-center">
+          <div className="logo-flash-container">
+            <img
+              src="/Logo.png"
+              alt="IcePulse Logo"
+              className="logo-flash mx-auto object-contain"
+              onError={(e) => {
+                if (e.target.src.includes('Logo.png')) {
+                  e.target.src = '/logo.png'
+                  return
+                }
+                e.target.style.display = 'none'
+                const fallback = e.target.nextElementSibling
+                if (fallback) fallback.style.display = 'block'
+              }}
+            />
+            <div className="hidden text-6xl font-bold text-blue-400">
+              IcePulse
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!streamInfo) {
     return (
