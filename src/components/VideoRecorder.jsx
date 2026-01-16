@@ -496,6 +496,35 @@ function VideoRecorder() {
     return /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
   }
 
+  const copyTextToClipboard = async (text) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch (err) {
+      console.warn('Clipboard API failed, falling back:', err)
+    }
+
+    try {
+      const temp = document.createElement('textarea')
+      temp.value = text
+      temp.style.position = 'fixed'
+      temp.style.opacity = '0'
+      document.body.appendChild(temp)
+      temp.focus()
+      temp.select()
+      const copied = document.execCommand('copy')
+      document.body.removeChild(temp)
+      if (copied) return true
+    } catch (err) {
+      console.warn('execCommand copy failed, falling back:', err)
+    }
+
+    const manualCopy = window.prompt('Copy this Broadcast ID:', text)
+    return manualCopy !== null
+  }
+
   const requestMediaAccess = async (cameraId = null, facingModeOverride = null) => {
     setIsRequesting(true)
     setError(null)
@@ -1757,6 +1786,21 @@ function VideoRecorder() {
     })
   }
 
+  // Disable save until required fields are selected.
+  // - Existing game: require a game selection.
+  // - Manual game: require team + season + opponent.
+  // - Practice/skills: require team + season.
+  const canSaveEvent = (() => {
+    if (!eventType) return false
+    if (eventType === 'game' && !eventUseManualGame) {
+      return !!eventExistingGameId
+    }
+    if (eventType === 'game') {
+      return !!eventTeamId && !!eventSeasonId && !!eventOpponent.trim()
+    }
+    return !!eventTeamId && !!eventSeasonId
+  })()
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-900 text-white">
       <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-3 sm:p-4 lg:p-6">
@@ -2294,7 +2338,11 @@ function VideoRecorder() {
                         onChange={(e) => {
                           const nextValue = e.target.checked
                           setEnableLiveStreaming(nextValue)
-                          if (nextValue && isMobileDevice()) {
+                          if (!nextValue) {
+                            setShowLarixModal(false)
+                            setHasCopiedBroadcastId(false)
+                            setRtmpsComboCopied(false)
+                          } else if (isMobileDevice()) {
                             setShowLarixModal(true)
                           }
                         }}
@@ -2457,7 +2505,7 @@ function VideoRecorder() {
                         // Modal stays open - stream URL will appear and button will change to "Record"
                       }
                     }}
-                    disabled={isCreatingEvent}
+                    disabled={isCreatingEvent || !canSaveEvent}
                     className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed font-semibold"
                   >
                     {isCreatingEvent ? 'Saving…' : 'Save'}
@@ -2478,22 +2526,14 @@ function VideoRecorder() {
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (!rtmpsKey) return
                       const baseUrl = rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
                       const combined = baseUrl.endsWith('/')
                         ? `${baseUrl}${rtmpsKey}`
                         : `${baseUrl}/${rtmpsKey}`
-                      if (navigator.clipboard?.writeText) {
-                        navigator.clipboard.writeText(combined)
-                      } else {
-                        const temp = document.createElement('textarea')
-                        temp.value = combined
-                        document.body.appendChild(temp)
-                        temp.select()
-                        document.execCommand('copy')
-                        document.body.removeChild(temp)
-                      }
+                      const didCopy = await copyTextToClipboard(combined)
+                      if (!didCopy) return
                       setRtmpsComboCopied(true)
                       setHasCopiedBroadcastId(true)
                       setTimeout(() => setRtmpsComboCopied(false), 2000)
@@ -2527,12 +2567,13 @@ function VideoRecorder() {
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-xs text-gray-300 uppercase tracking-wide">RTMPS URL/Stream Key</span>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const baseUrl = rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
                           const combined = baseUrl.endsWith('/')
                             ? `${baseUrl}${rtmpsKey}`
                             : `${baseUrl}/${rtmpsKey}`
-                          navigator.clipboard.writeText(combined)
+                          const didCopy = await copyTextToClipboard(combined)
+                          if (!didCopy) return
                           setRtmpsComboCopied(true)
                           setTimeout(() => setRtmpsComboCopied(false), 2000)
                         }}

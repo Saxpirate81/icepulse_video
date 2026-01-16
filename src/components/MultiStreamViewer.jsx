@@ -180,7 +180,7 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   // If a stream is selected, show full screen viewer
   if (selectedStreamId) {
     return (
-      <div className="h-screen flex flex-col bg-black">
+      <div className="h-[100dvh] flex flex-col bg-black min-h-0">
         <div className="flex-shrink-0 p-4 bg-black/80 border-b border-gray-800">
           <button
             onClick={() => setSelectedStreamId(null)}
@@ -190,8 +190,8 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
             <span>Back to All Streams</span>
           </button>
         </div>
-        <div className="flex-1 overflow-hidden">
-          <StreamViewer streamId={selectedStreamId} />
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <StreamViewer streamId={selectedStreamId} isEmbedded />
         </div>
       </div>
     )
@@ -269,6 +269,12 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
     const date = game.gameDate ? new Date(game.gameDate).toLocaleDateString() : ''
     const time = game.gameTime || ''
     return time ? `${date} @ ${time}` : date
+  }
+
+  const formatStartTime = (stream) => {
+    const createdAt = stream?.created_at ? new Date(stream.created_at) : null
+    if (!createdAt || Number.isNaN(createdAt.getTime())) return ''
+    return `Started ${createdAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
   }
 
   return (
@@ -358,6 +364,11 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
                   {game && (
                     <p className="text-xs text-gray-500 truncate">
                       {formatDateTime(game)}
+                    </p>
+                  )}
+                  {stream.created_at && (
+                    <p className="text-xs text-gray-500 truncate mt-1">
+                      {formatStartTime(stream)}
                     </p>
                   )}
                 </div>

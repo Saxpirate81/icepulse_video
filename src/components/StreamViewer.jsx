@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { Wifi, WifiOff, Play } from 'lucide-react'
 import Hls from 'hls.js'
 
-function StreamViewer({ streamId, isPreview = false }) {
+function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
   const [isLive, setIsLive] = useState(false)
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
@@ -692,8 +692,10 @@ function StreamViewer({ streamId, isPreview = false }) {
   
   const eventDisplay = getEventDisplay()
 
+  const rootHeightClass = isEmbedded ? 'h-full' : 'h-[100dvh]'
+
   return (
-    <div className="h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden flex flex-col">
+    <div className={`${rootHeightClass} bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden flex flex-col min-h-0`}>
       {/* Header */}
       <div className="flex-shrink-0 z-20 bg-black/85 backdrop-blur-sm p-2 sm:p-3">
         {/* Header Image */}
@@ -742,7 +744,10 @@ function StreamViewer({ streamId, isPreview = false }) {
       </div>
 
       {/* Video Player */}
-      <div className="w-full flex-1 bg-black flex items-center justify-center relative min-h-0 overflow-hidden">
+      <div
+        className="w-full flex-1 bg-black flex items-center justify-center relative min-h-0 overflow-hidden"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
         {/* Video container - flip video content but keep controls normal using wrapper approach */}
         <div className="w-full h-full relative" style={{ transform: 'scaleX(-1)' }}>
         <video
