@@ -285,6 +285,68 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
         VIDEO_PROVIDER === 'mux' ||
         (typeof playbackUrl === 'string' && playbackUrl.includes('stream.mux.com'))
 
+      const scheduleRetry = (delayMs = 3000) => {
+        if (cancelled) return
+        setTimeout(() => {
+          if (!cancelled) {
+            setRetryToken((token) => token + 1)
+          }
+        }, delayMs)
+      }
+
+      if (isMuxStream && playbackUrl) {
+        // Mux HLS playback: avoid polling/Cloudflare flow, just attach directly.
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = playbackUrl
+          video.addEventListener('loadedmetadata', () => {
+            setIsLive(true)
+            setError(null)
+          })
+          video.addEventListener('playing', () => {
+            setIsLive(true)
+            setError(null)
+          })
+          video.addEventListener('error', () => {
+            setIsLive(false)
+            setError(null)
+            scheduleRetry()
+          })
+          video.play().catch(() => {
+            setIsLive(true)
+          })
+          return
+        }
+
+        if (Hls.isSupported()) {
+          if (hlsRef.current) {
+            hlsRef.current.destroy()
+          }
+          const hls = new Hls({
+            debug: false,
+            enableWorker: true,
+            lowLatencyMode: true,
+            backBufferLength: 90
+          })
+          hls.loadSource(playbackUrl)
+          hls.attachMedia(video)
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            setIsLive(true)
+            setError(null)
+            video.play().catch(() => {})
+          })
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              setIsLive(false)
+              setError(null)
+              scheduleRetry()
+              hls.destroy()
+            }
+          })
+          hlsRef.current = hls
+          return
+        }
+      }
+
       // Build list of candidate URLs to poll
       const candidateUrls = []
       
@@ -503,15 +565,6 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
       }
 
       // Check for native HLS support (Safari)
-      const scheduleRetry = (delayMs = 3000) => {
-        if (cancelled) return
-        setTimeout(() => {
-          if (!cancelled) {
-            setRetryToken((token) => token + 1)
-          }
-        }, delayMs)
-      }
-
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = readyUrl
         video.addEventListener('loadedmetadata', () => {
