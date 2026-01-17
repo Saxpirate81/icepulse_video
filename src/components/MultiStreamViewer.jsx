@@ -9,6 +9,12 @@ function StreamPreview({ streamId }) {
   const videoRef = useRef(null)
   const [isLive, setIsLive] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
+  const DEBUG_PREVIEW = true
+  const logPreview = (...args) => {
+    if (DEBUG_PREVIEW) {
+      console.log('🧩 [StreamPreview]', ...args)
+    }
+  }
   
   useEffect(() => {
     let cancelled = false
@@ -17,6 +23,7 @@ function StreamPreview({ streamId }) {
     const setupPreview = async () => {
       if (cancelled) return
       
+      logPreview('Loading preview', { streamId })
       const { data } = await supabase
         .from('icepulse_streams')
         .select('cloudflare_playback_url')
@@ -24,6 +31,7 @@ function StreamPreview({ streamId }) {
         .maybeSingle()
       
       const playbackUrl = data?.cloudflare_playback_url
+      logPreview('Preview playback URL', { streamId, playbackUrl })
       if (!playbackUrl || cancelled) {
         setIsChecking(false)
         setIsLive(false)
@@ -53,6 +61,7 @@ function StreamPreview({ streamId }) {
         if (cancelled) return
         setIsLive(isStreamLive)
         setIsChecking(false)
+        logPreview('Preview probe result', { streamId, isStreamLive })
         if (!isStreamLive) return
 
         const video = videoRef.current
@@ -61,6 +70,7 @@ function StreamPreview({ streamId }) {
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl
           video.play().catch(() => {})
+          logPreview('Preview native HLS playing', { streamId })
           return
         }
 
@@ -70,12 +80,14 @@ function StreamPreview({ streamId }) {
           hls.attachMedia(video)
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             video.play().catch(() => {})
+            logPreview('Preview HLS manifest parsed', { streamId })
           })
           video._hls = hls
         }
       } catch (e) {
         if (!cancelled) {
           console.warn('Preview setup failed:', e)
+          logPreview('Preview setup failed', { streamId, message: e?.message })
         }
       }
     }
@@ -118,15 +130,23 @@ function StreamPreview({ streamId }) {
 function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   const [streams, setStreams] = useState([])
   const [selectedStreamId, setSelectedStreamId] = useState(null)
+  const [selectedStream, setSelectedStream] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [resolvedOrgId, setResolvedOrgId] = useState(organizationId)
   const [showIntro, setShowIntro] = useState(true)
+  const DEBUG_MULTI = true
+  const logMulti = (...args) => {
+    if (DEBUG_MULTI) {
+      console.log('🧭 [MultiStreamViewer]', ...args)
+    }
+  }
 
   // Resolve organization name to ID if needed
   useEffect(() => {
     const resolveOrgId = async () => {
       if (organizationId) {
         setResolvedOrgId(organizationId)
+        logMulti('Resolved org ID from prop', { organizationId })
         return
       }
       
@@ -140,8 +160,10 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
         
         if (data && !error) {
           setResolvedOrgId(data.id)
+          logMulti('Resolved org ID from name', { organizationName, orgId: data.id })
         } else {
           setResolvedOrgId(null)
+          logMulti('Failed to resolve org ID', { organizationName, error })
         }
       } else {
         setResolvedOrgId(null)
@@ -159,6 +181,7 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   useEffect(() => {
     const loadStreams = async () => {
       try {
+        logMulti('Loading streams', { resolvedOrgId, gameId })
         const probePlaybackUrl = async (url) => {
           if (!url) return false
           try {
@@ -198,17 +221,23 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
 
         if (error) {
           console.error('Error loading streams:', error)
+          logMulti('Stream query error', { message: error?.message })
           return
         }
 
         const liveFlags = await Promise.all(
           (data || []).map(async (stream) => {
-            if (stream?.is_active) return true
-            return probePlaybackUrl(stream?.cloudflare_playback_url)
+            const isManifestLive = await probePlaybackUrl(stream?.cloudflare_playback_url)
+            if (isManifestLive) return true
+            if (!stream?.is_active) return false
+            const createdAt = stream?.created_at ? new Date(stream.created_at) : null
+            const ageMs = createdAt && !Number.isNaN(createdAt.getTime()) ? Date.now() - createdAt.getTime() : null
+            // Grace window for active streams that are warming up
+            return typeof ageMs === 'number' && ageMs < 2 * 60 * 1000
           })
         )
 
-        // Only show streams that are actually live (active flag or playable manifest)
+        // Only show streams that are actually live or within warm-up window
         const liveOnly = (data || []).filter((stream, idx) => liveFlags[idx])
 
         // Filter by organization if resolvedOrgId is provided
@@ -223,8 +252,14 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
           : liveOnly
 
         setStreams(filteredStreams || [])
+        logMulti('Streams loaded', {
+          total: data?.length || 0,
+          liveOnly: liveOnly.length,
+          filtered: filteredStreams?.length || 0
+        })
       } catch (err) {
         console.error('Error loading streams:', err)
+        logMulti('Load streams error', { message: err?.message })
       } finally {
         setIsLoading(false)
       }
@@ -256,7 +291,12 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
           </button>
         </div>
         <div className="flex-1 min-h-0 overflow-hidden">
-          <StreamViewer streamId={selectedStreamId} isEmbedded />
+          <StreamViewer
+            streamId={selectedStreamId}
+            isEmbedded
+            streamInfoOverride={selectedStream}
+            playbackUrlOverride={selectedStream?.cloudflare_playback_url}
+          />
         </div>
       </div>
     )
@@ -414,7 +454,14 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
             return (
               <div
                 key={stream.id}
-                onClick={() => setSelectedStreamId(stream.id)}
+                onClick={() => {
+                  logMulti('Stream selected', {
+                    streamId: stream.id,
+                    playbackUrl: stream.cloudflare_playback_url
+                  })
+                  setSelectedStreamId(stream.id)
+                  setSelectedStream(stream)
+                }}
                 className="bg-gray-900/70 rounded-2xl overflow-hidden border border-gray-800/60 hover:border-blue-500/70 transition-all cursor-pointer group shadow-[0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm"
               >
                 {/* Video Preview - Muted, using StreamPreview component */}

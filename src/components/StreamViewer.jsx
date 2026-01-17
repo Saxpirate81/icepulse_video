@@ -3,14 +3,32 @@ import { supabase } from '../lib/supabase'
 import { Wifi, WifiOff, Play } from 'lucide-react'
 import Hls from 'hls.js'
 
-function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
+function StreamViewer({
+  streamId,
+  isPreview = false,
+  isEmbedded = false,
+  streamInfoOverride = null,
+  playbackUrlOverride = null
+}) {
   const [isLive, setIsLive] = useState(false)
   const [streamInfo, setStreamInfo] = useState(null)
   const [error, setError] = useState(null)
   const [retryToken, setRetryToken] = useState(0)
   const [showIntro, setShowIntro] = useState(true)
+  const [manifestStatus, setManifestStatus] = useState(null)
+  const [lastPlaybackAt, setLastPlaybackAt] = useState(null)
   const videoRef = useRef(null)
+  const [videoReady, setVideoReady] = useState(false)
   const hlsRef = useRef(null)
+  const lastPlaybackRef = useRef(null)
+  const manifestReadyRef = useRef(false)
+  const lastManifestStatusRef = useRef(null)
+  const DEBUG_VIEWER = true
+  const log = (...args) => {
+    if (DEBUG_VIEWER) {
+      console.log('🎥 [StreamViewer]', ...args)
+    }
+  }
   const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
 
   useEffect(() => {
@@ -20,9 +38,85 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
 
   useEffect(() => {
     let cancelled = false
+    const playbackUrl = playbackUrlOverride || streamInfo?.cloudflare_playback_url
+    const isMuxStream =
+      VIDEO_PROVIDER === 'mux' ||
+      (typeof playbackUrl === 'string' && playbackUrl.includes('stream.mux.com'))
+
+    if (!playbackUrl || !isMuxStream) {
+      log('Manifest check skipped', { hasPlaybackUrl: !!playbackUrl, isMuxStream })
+      return undefined
+    }
+
+    // Reset readiness when the playback URL changes.
+    manifestReadyRef.current = false
+    lastManifestStatusRef.current = null
+    log('Manifest polling started', { playbackUrl })
+
+    const checkManifest = async () => {
+      if (cancelled) return
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 4000)
+        const fetchUrl = playbackUrl.includes('?')
+          ? `${playbackUrl}&_=${Date.now()}`
+          : `${playbackUrl}?_=${Date.now()}`
+        const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
+        clearTimeout(timeoutId)
+        if (cancelled) return
+        setManifestStatus(res.status)
+        if (lastManifestStatusRef.current !== res.status) {
+          lastManifestStatusRef.current = res.status
+          log('Manifest status changed', { status: res.status })
+        }
+        if (res.ok) {
+          const text = await res.text()
+          if (text && text.includes('#EXTM3U')) {
+            if (!manifestReadyRef.current) {
+              manifestReadyRef.current = true
+              setIsLive(true)
+              setError(null)
+              setRetryToken((token) => token + 1)
+              log('Manifest ready, triggering player reattach')
+            }
+          }
+        } else if (manifestReadyRef.current) {
+          manifestReadyRef.current = false
+          log('Manifest no longer ready')
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setManifestStatus(null)
+          log('Manifest check error', { message: err?.message })
+        }
+      }
+    }
+
+    checkManifest()
+    const interval = setInterval(checkManifest, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [streamInfo?.cloudflare_playback_url, VIDEO_PROVIDER])
+
+  useEffect(() => {
+    let cancelled = false
     // Load stream metadata
     const loadStreamInfo = async () => {
       try {
+        if (streamInfoOverride) {
+          if (!cancelled) {
+            setStreamInfo(streamInfoOverride)
+            setIsLive(Boolean(streamInfoOverride?.is_active))
+            log('Using streamInfoOverride', {
+              id: streamInfoOverride?.id,
+              isActive: streamInfoOverride?.is_active,
+              playbackUrl: streamInfoOverride?.cloudflare_playback_url
+            })
+          }
+          return
+        }
         // Try to find by UUID first
         let query = supabase
           .from('icepulse_streams')
@@ -45,6 +139,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           query = query.eq('cloudflare_live_input_id', streamId)
         }
 
+        log('Loading stream info', { streamId, isUuid })
         const { data, error } = await query.maybeSingle()
 
         if (error) {
@@ -66,29 +161,90 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
         }
         
         console.log('✅ Loaded Stream Info:', data)
+        log('Stream info resolved', {
+          id: data?.id,
+          isActive: data?.is_active,
+          gameId: data?.game_id,
+          playbackUrl: data?.cloudflare_playback_url
+        })
         
-        // If this stream is NOT active, check if there is a newer active stream for the same game
+        const playbackUrl = data?.cloudflare_playback_url
+        const isMuxStream =
+          VIDEO_PROVIDER === 'mux' ||
+          (typeof playbackUrl === 'string' && playbackUrl.includes('stream.mux.com'))
+
+        const probePlaybackUrl = async (url) => {
+          if (!url) return false
+          try {
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 4000)
+            const fetchUrl = url.includes('?') ? `${url}&_=${Date.now()}` : `${url}?_=${Date.now()}`
+            const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
+            clearTimeout(timeoutId)
+            if (!res.ok) return false
+            const text = await res.text()
+            if (!text || !text.includes('#EXTM3U')) return false
+            return !text.includes('#EXT-X-ENDLIST')
+          } catch (e) {
+            return false
+          }
+        }
+
+        // If this stream is NOT active, try to find a newer/playable stream for the same game.
+        // is_active can be stale; prefer the newest playable stream as a fallback.
         if (!data.is_active && data.game_id && !cancelled) {
-          console.log('🔍 Stream is inactive, checking for newer active stream for game:', data.game_id)
-          const { data: activeStream } = await supabase
+          console.log('🔍 Stream is inactive, checking for newer stream for game:', data.game_id)
+          const { data: recentStreams } = await supabase
             .from('icepulse_streams')
-            .select('id')
+            .select('id, cloudflare_playback_url')
             .eq('game_id', data.game_id)
-            .eq('is_active', true)
             .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-          
-          if (activeStream && activeStream.id !== streamId) {
-            console.log('🔄 Found newer active stream, redirecting:', activeStream.id)
-            window.location.href = `/stream/${activeStream.id}`
-            return
+            .limit(6)
+
+          if (recentStreams?.length) {
+            const newestStream = recentStreams[0]
+            if (newestStream?.id && newestStream.id !== streamId) {
+              console.log('🔄 Found newer stream, redirecting:', newestStream.id)
+              log('Redirecting to newest stream', { from: streamId, to: newestStream.id })
+              window.location.href = `/stream/${newestStream.id}`
+              return
+            }
+
+            for (const stream of recentStreams) {
+              if (!stream?.cloudflare_playback_url || stream.id === streamId) continue
+              const playable = await probePlaybackUrl(stream.cloudflare_playback_url)
+              if (playable) {
+                console.log('🔄 Found playable stream, redirecting:', stream.id)
+                log('Redirecting to playable stream', { from: streamId, to: stream.id })
+                window.location.href = `/stream/${stream.id}`
+                return
+              }
+            }
           }
         }
 
         if (!cancelled) {
+          let isPlayable = false
+          if (!data.is_active && isMuxStream && playbackUrl) {
+            isPlayable = await probePlaybackUrl(playbackUrl)
+            const recentlyPlayed = lastPlaybackRef.current && Date.now() - lastPlaybackRef.current < 5000
+            if (isPlayable && !manifestReadyRef.current && !recentlyPlayed) {
+              manifestReadyRef.current = true
+              setError(null)
+              setRetryToken((token) => token + 1)
+              log('Playable manifest detected for inactive stream, reattaching', {
+                playbackUrl,
+                recentlyPlayed
+              })
+            }
+          }
           setStreamInfo(data)
-          setIsLive(data.is_active || false)
+          setIsLive(Boolean(data.is_active || isPlayable))
+          log('Stream live status resolved', {
+            isActive: data?.is_active,
+            isPlayable,
+            isLive: Boolean(data?.is_active || isPlayable)
+          })
         }
       } catch (err) {
         console.error('Error loading stream info:', err)
@@ -101,19 +257,28 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
 
     if (streamId) {
       console.log('🔍 StreamViewer mounted with ID:', streamId)
+      log('StreamViewer mount', {
+        streamId,
+        hasOverride: !!streamInfoOverride,
+        playbackUrlOverride
+      })
       loadStreamInfo()
       
       // Poll for stream status updates (e.g. if it goes live)
-      const statusInterval = setInterval(() => {
-        loadStreamInfo()
-      }, 5000)
+      const statusInterval = streamInfoOverride
+        ? null
+        : setInterval(() => {
+            loadStreamInfo()
+          }, 5000)
       
       return () => {
         cancelled = true
-        clearInterval(statusInterval)
+        if (statusInterval) {
+          clearInterval(statusInterval)
+        }
       }
     }
-  }, [streamId])
+  }, [streamId, streamInfoOverride])
 
   const pollingStartedRef = useRef(null)
 
@@ -123,11 +288,25 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
     
     let cancelled = false
     
-    const currentPlaybackUrl = streamInfo?.cloudflare_playback_url
-    if (!currentPlaybackUrl || pollingStartedRef.current === currentPlaybackUrl) return
+    const currentPlaybackUrl = playbackUrlOverride || streamInfo?.cloudflare_playback_url
+    const setupKey = currentPlaybackUrl ? `${currentPlaybackUrl}|${retryToken}` : ''
+    if (!currentPlaybackUrl || pollingStartedRef.current === setupKey) {
+      log('Player setup skipped', {
+        currentPlaybackUrl,
+        setupKey,
+        lastSetupKey: pollingStartedRef.current
+      })
+      return
+    }
     
-    pollingStartedRef.current = currentPlaybackUrl
+    if (!videoReady) {
+      log('Player setup waiting for video element', { currentPlaybackUrl })
+      return
+    }
+
+    pollingStartedRef.current = setupKey
     console.log('🎬 [VIEWER] Starting setup for URL:', currentPlaybackUrl)
+    log('Player setup begin', { currentPlaybackUrl, retryToken })
 
     // Check WebRTC support
     const isWebRTCSupported = () => {
@@ -278,41 +457,83 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
 
     const setup = async () => {
       const video = videoRef.current
-      if (!video) return
+      if (!video) {
+        log('Video element missing, aborting setup')
+        return
+      }
 
-      const playbackUrl = streamInfo.cloudflare_playback_url
+      const playbackUrl = playbackUrlOverride || streamInfo.cloudflare_playback_url
       const isMuxStream =
         VIDEO_PROVIDER === 'mux' ||
         (typeof playbackUrl === 'string' && playbackUrl.includes('stream.mux.com'))
+      log('Playback decision', {
+        playbackUrl,
+        isMuxStream,
+        hasNativeHls: video.canPlayType('application/vnd.apple.mpegurl')
+      })
 
       const scheduleRetry = (delayMs = 3000) => {
         if (cancelled) return
         setTimeout(() => {
           if (!cancelled) {
             setRetryToken((token) => token + 1)
+            log('Retry scheduled', { delayMs })
           }
         }, delayMs)
       }
+
+      const onVideoEvent = (eventName) => () => {
+        log('Video event', { event: eventName, currentTime: video.currentTime })
+        if (eventName === 'playing' || eventName === 'loadedmetadata') {
+          const now = Date.now()
+          lastPlaybackRef.current = now
+          setLastPlaybackAt(now)
+        }
+      }
+
+      const videoHandlers = {
+        loadedmetadata: onVideoEvent('loadedmetadata'),
+        playing: onVideoEvent('playing'),
+        waiting: onVideoEvent('waiting'),
+        stalled: onVideoEvent('stalled'),
+        pause: onVideoEvent('pause'),
+        error: onVideoEvent('error')
+      }
+
+      if (video._viewerHandlers) {
+        Object.entries(video._viewerHandlers).forEach(([event, handler]) => {
+          video.removeEventListener(event, handler)
+        })
+      }
+
+      Object.entries(videoHandlers).forEach(([event, handler]) => {
+        video.addEventListener(event, handler)
+      })
+      video._viewerHandlers = videoHandlers
 
       if (isMuxStream && playbackUrl) {
         // Mux HLS playback: avoid Cloudflare flow, attach directly.
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl
-          video.addEventListener('loadedmetadata', () => {
+          const markPlaying = () => {
             setIsLive(true)
             setError(null)
-          })
-          video.addEventListener('playing', () => {
-            setIsLive(true)
-            setError(null)
-          })
+            const now = Date.now()
+            lastPlaybackRef.current = now
+            setLastPlaybackAt(now)
+            log('Native HLS playback started')
+          }
+          video.addEventListener('loadedmetadata', markPlaying)
+          video.addEventListener('playing', markPlaying)
           video.addEventListener('error', () => {
             setIsLive(false)
             setError('Waiting for broadcast signal')
             scheduleRetry()
+            log('Native HLS error, retrying')
           })
           video.play().catch(() => {
             setIsLive(true)
+            log('Native HLS autoplay failed, set live anyway')
           })
           return
         }
@@ -332,11 +553,17 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             setIsLive(true)
             setError(null)
+            setLastPlaybackAt(Date.now())
             video.play().catch(() => {})
+            log('HLS manifest parsed, playing')
           })
           hls.on(Hls.Events.ERROR, (event, data) => {
+            log('HLS error', { type: data?.type, details: data?.details, fatal: data?.fatal })
             if (data.fatal) {
-              setIsLive(false)
+              const recentlyPlayed = lastPlaybackRef.current && Date.now() - lastPlaybackRef.current < 5000
+              if (!recentlyPlayed) {
+                setIsLive(false)
+              }
               setError('Waiting for broadcast signal')
               scheduleRetry()
               hls.destroy()
@@ -494,6 +721,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
 
       const uniqueCandidates = [...new Set(candidateUrls.filter(Boolean))]
       console.log('🎬 [VIEWER] Polling candidates:', uniqueCandidates)
+      log('Polling candidates count', { count: uniqueCandidates.length })
 
       if (uniqueCandidates.length === 0) {
         console.warn('⚠️ [VIEWER] No playback URLs or IDs found; cannot poll.')
@@ -555,6 +783,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
       const readyUrl = await waitForManifest()
       if (!readyUrl) {
         console.warn('⚠️ Manifest not ready after extended polling')
+        log('Manifest not ready after polling')
         if (isMuxStream) {
           setError(null)
         } else {
@@ -577,28 +806,33 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           console.log('✅ HLS Metadata loaded, playing...')
           setIsLive(true)
           setError(null)
+          log('HLS metadata loaded for ready URL')
         })
         video.addEventListener('playing', () => {
           console.log('✅ HLS Video playing')
           setIsLive(true)
           setError(null)
+          log('HLS playing for ready URL')
         })
         video.addEventListener('error', (e) => {
           console.error('❌ HLS Video error:', e)
           setIsLive(false)
           setError(null)
           scheduleRetry()
+          log('HLS error for ready URL, retrying')
         })
         video.addEventListener('ended', () => {
           console.log('ℹ️ Stream ended, waiting for restart...')
           setIsLive(false)
           setError(null)
           scheduleRetry()
+          log('HLS ended, retrying')
         })
         video.play().catch(e => {
           console.warn('Autoplay failed:', e)
           // Still set as live if video loaded, user can click play
           setIsLive(true)
+          log('HLS autoplay failed, set live anyway')
         })
       }
       // Check for HLS.js support (Chrome, Firefox, etc.)
@@ -622,21 +856,25 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           setIsLive(true)
           setError(null)
           video.play().catch(e => console.warn('Autoplay failed:', e))
+          log('HLS manifest parsed for ready URL')
         })
 
         video.addEventListener('playing', () => {
           console.log('✅ HLS Video playing')
           setIsLive(true)
           setError(null)
+          log('HLS playing for ready URL')
         })
         video.addEventListener('ended', () => {
           console.log('ℹ️ Stream ended, waiting for restart...')
           setIsLive(false)
           setError(null)
           scheduleRetry()
+          log('HLS ended, retrying')
         })
 
         hls.on(Hls.Events.ERROR, (event, data) => {
+          log('HLS error (ready URL)', { type: data?.type, details: data?.details, fatal: data?.fatal })
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
@@ -674,6 +912,16 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
 
     return () => {
       cancelled = true
+      const video = videoRef.current
+      if (video) {
+        log('Cleaning up player')
+        if (video._viewerHandlers) {
+          Object.entries(video._viewerHandlers).forEach(([event, handler]) => {
+            video.removeEventListener(event, handler)
+          })
+          video._viewerHandlers = null
+        }
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy()
       }
@@ -687,7 +935,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
         videoRef.current.srcObject = null
       }
     }
-  }, [streamInfo?.cloudflare_playback_url, isPreview, retryToken])
+  }, [streamInfo?.cloudflare_playback_url, isPreview, retryToken, videoReady])
 
   // Don't show error screen - show waiting UI instead
   // Errors are handled gracefully with retries
@@ -810,7 +1058,10 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
         {/* Video container - flip video content but keep controls normal using wrapper approach */}
         <div className="w-full h-full relative" style={{ transform: 'scaleX(-1)' }}>
         <video
-          ref={videoRef}
+          ref={(el) => {
+            videoRef.current = el
+            setVideoReady(Boolean(el))
+          }}
           className="w-full h-full object-contain"
           playsInline
           muted={true}
@@ -823,7 +1074,10 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
         </div>
         
         {/* Waiting / Offline Overlay - Show when stream is not live */}
-        {!isLive && (
+        {(() => {
+          const recentlyPlayed = lastPlaybackAt && Date.now() - lastPlaybackAt < 5000
+          return !isLive && !recentlyPlayed
+        })() && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
             <div className="text-center px-4">
               <div className="relative mb-6">
@@ -833,7 +1087,9 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
                 {error || 'Waiting for broadcast signal'}
               </h2>
               <p className="text-gray-400 text-sm sm:text-base">
-                Waiting for broadcast signal
+                {manifestStatus === 412
+                  ? 'Mux is not receiving the live broadcast yet.'
+                  : 'Waiting for broadcast signal'}
               </p>
             </div>
           </div>
