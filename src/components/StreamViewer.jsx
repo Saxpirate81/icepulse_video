@@ -9,7 +9,6 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
   const [error, setError] = useState(null)
   const [retryToken, setRetryToken] = useState(0)
   const [showIntro, setShowIntro] = useState(true)
-  const [broadcastCopied, setBroadcastCopied] = useState(false)
   const videoRef = useRef(null)
   const hlsRef = useRef(null)
   const VIDEO_PROVIDER = (import.meta.env.VITE_VIDEO_PROVIDER || 'mux').toLowerCase()
@@ -296,39 +295,6 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
       }
 
       if (isMuxStream && playbackUrl) {
-        const waitForMuxManifest = async (maxAttempts = 10) => {
-          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            if (cancelled) return false
-            try {
-              const controller = new AbortController()
-              const timeoutId = setTimeout(() => controller.abort(), 4000)
-              const fetchUrl = playbackUrl.includes('?')
-                ? `${playbackUrl}&_=${Date.now()}`
-                : `${playbackUrl}?_=${Date.now()}`
-              const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
-              clearTimeout(timeoutId)
-              if (res.ok) {
-                const text = await res.text()
-                if (text && text.includes('#EXTM3U')) return true
-              }
-            } catch (e) {
-              // ignore and retry
-            }
-            await new Promise(r => setTimeout(r, 2000))
-          }
-          return false
-        }
-
-        const muxReady = await waitForMuxManifest()
-        if (!muxReady) {
-          setIsLive(false)
-          setError('Waiting for a live RTMP broadcast. If you are streaming from a computer, start OBS (or another RTMP app) using the RTMPS URL and Stream Key.')
-          scheduleRetry()
-          return
-        }
-
-        setError(null)
-
         // Mux HLS playback: avoid Cloudflare flow, attach directly.
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl
@@ -342,7 +308,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           })
           video.addEventListener('error', () => {
             setIsLive(false)
-            setError(null)
+            setError('Waiting for broadcast signal')
             scheduleRetry()
           })
           video.play().catch(() => {
@@ -371,7 +337,7 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
               setIsLive(false)
-              setError(null)
+              setError('Waiting for broadcast signal')
               scheduleRetry()
               hls.destroy()
             }
@@ -786,43 +752,6 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
   const eventDisplay = getEventDisplay()
 
   const rootHeightClass = isEmbedded ? 'h-full' : 'h-[100dvh]'
-  const rtmpsUrl = streamInfo?.rtmps_url || 'rtmps://global-live.mux.com:443/app'
-  const streamKey = streamInfo?.cloudflare_stream_key || ''
-  const combinedBroadcastId = streamKey
-    ? (rtmpsUrl.endsWith('/') ? `${rtmpsUrl}${streamKey}` : `${rtmpsUrl}/${streamKey}`)
-    : ''
-
-  const copyBroadcastId = async () => {
-    if (!combinedBroadcastId) return
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(combinedBroadcastId)
-        setBroadcastCopied(true)
-        setTimeout(() => setBroadcastCopied(false), 2000)
-        return
-      }
-    } catch (err) {
-      console.warn('Clipboard API failed, falling back:', err)
-    }
-
-    try {
-      const temp = document.createElement('textarea')
-      temp.value = combinedBroadcastId
-      temp.style.position = 'fixed'
-      temp.style.opacity = '0'
-      document.body.appendChild(temp)
-      temp.focus()
-      temp.select()
-      const copied = document.execCommand('copy')
-      document.body.removeChild(temp)
-      if (copied) {
-        setBroadcastCopied(true)
-        setTimeout(() => setBroadcastCopied(false), 2000)
-      }
-    } catch (err) {
-      console.warn('execCommand copy failed:', err)
-    }
-  }
 
   return (
     <div className={`${rootHeightClass} bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white overflow-hidden flex flex-col min-h-0`}>
@@ -903,32 +832,9 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
               <h2 className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-gray-400 via-gray-300 to-gray-400 bg-clip-text text-transparent mb-2">
                 {error || 'Waiting for broadcast signal'}
               </h2>
-              <p className="text-gray-400 text-sm sm:text-base mb-4">
-                Live streaming requires an RTMP broadcaster (OBS/Larix).
+              <p className="text-gray-400 text-sm sm:text-base">
+                Waiting for broadcast signal
               </p>
-              {combinedBroadcastId && (
-                <div className="max-w-lg mx-auto bg-black/50 border border-gray-700 rounded-lg p-3 space-y-2 text-left">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-gray-300 uppercase tracking-wide">RTMPS URL / Stream Key</span>
-                    <button
-                      onClick={copyBroadcastId}
-                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold text-xs sm:text-sm transition-colors"
-                    >
-                      {broadcastCopied ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={combinedBroadcastId}
-                    readOnly
-                    className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 text-xs font-mono"
-                    onClick={(e) => e.target.select()}
-                  />
-                  <p className="text-xs text-gray-400">
-                    Paste this into OBS or Larix to start the live broadcast.
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
