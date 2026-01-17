@@ -1928,7 +1928,8 @@ export function OrgProvider({ children }) {
   }
 
   // 4. Create Stream (Live) - Cloudflare Live Input
-  const createStream = async (gameId, resumeStreamId = null) => {
+  const createStream = async (gameId, resumeStreamId = null, options = {}) => {
+    const { forceActive = false } = options || {}
     if (USE_MOCK) return { id: 'mock-stream', streamUrl: '#' }
 
     try {
@@ -1980,7 +1981,7 @@ export function OrgProvider({ children }) {
           
           if (stoppedAt > fiveMinutesAgo) {
             // Reactivate the stream
-        const shouldActivateNow = VIDEO_PROVIDER !== 'mux'
+          const shouldActivateNow = forceActive || VIDEO_PROVIDER !== 'mux'
         const { error: updateError } = await supabase
           .from('icepulse_streams')
           .update({ is_active: shouldActivateNow })
@@ -2015,7 +2016,7 @@ export function OrgProvider({ children }) {
 
       if (inactiveStream) {
         // Reactivate the inactive stream (reuse the same URL)
-        const shouldActivateNow = VIDEO_PROVIDER !== 'mux'
+        const shouldActivateNow = forceActive || VIDEO_PROVIDER !== 'mux'
         const { error: updateError } = await supabase
           .from('icepulse_streams')
           .update({ is_active: shouldActivateNow })
@@ -2059,7 +2060,7 @@ export function OrgProvider({ children }) {
           game_id: gameId,
           created_by: user.id,
           // Start inactive and let Mux webhook flip to active when broadcast starts.
-          is_active: false,
+          is_active: forceActive ? true : false,
           cloudflare_live_input_id: liveInputId,
           cloudflare_stream_key: rtmpsKey,
           cloudflare_playback_url: playbackUrl,

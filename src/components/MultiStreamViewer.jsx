@@ -7,6 +7,8 @@ import StreamViewer from './StreamViewer'
 // Preview component for grid view - minimal, muted video
 function StreamPreview({ streamId }) {
   const videoRef = useRef(null)
+  const [isLive, setIsLive] = useState(false)
+  const [isChecking, setIsChecking] = useState(true)
   
   useEffect(() => {
     let cancelled = false
@@ -22,9 +24,37 @@ function StreamPreview({ streamId }) {
         .maybeSingle()
       
       const playbackUrl = data?.cloudflare_playback_url
-      if (!playbackUrl || cancelled) return
+      if (!playbackUrl || cancelled) {
+        setIsChecking(false)
+        setIsLive(false)
+        return
+      }
+      
+      const probePlaybackUrl = async (url) => {
+        if (!url) return false
+        try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 4000)
+          const fetchUrl = url.includes('?') ? `${url}&_=${Date.now()}` : `${url}?_=${Date.now()}`
+          const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
+          clearTimeout(timeoutId)
+          if (!res.ok) return false
+          const text = await res.text()
+          if (!text || !text.includes('#EXTM3U')) return false
+          return !text.includes('#EXT-X-ENDLIST')
+        } catch (e) {
+          return false
+        }
+      }
       
       try {
+        setIsChecking(true)
+        const isStreamLive = await probePlaybackUrl(playbackUrl)
+        if (cancelled) return
+        setIsLive(isStreamLive)
+        setIsChecking(false)
+        if (!isStreamLive) return
+
         const video = videoRef.current
         if (!video || cancelled) return
 
@@ -54,6 +84,7 @@ function StreamPreview({ streamId }) {
     
     return () => {
       cancelled = true
+      setIsChecking(false)
       if (videoRef.current?._hls) {
         videoRef.current._hls.destroy()
         videoRef.current._hls = null
@@ -66,14 +97,21 @@ function StreamPreview({ streamId }) {
   }, [streamId])
   
   return (
-    <video
-      ref={videoRef}
-      className="w-full h-full object-cover"
-      playsInline
-      muted
-      autoPlay
-      style={{ transform: 'scaleX(-1)' }}
-    />
+    <div className="w-full h-full relative">
+      <video
+        ref={videoRef}
+        className="w-full h-full object-cover"
+        playsInline
+        muted
+        autoPlay
+        style={{ transform: 'scaleX(-1)' }}
+      />
+      {!isLive && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-white text-xs sm:text-sm font-semibold">
+          {isChecking ? 'Checking stream…' : 'Waiting for broadcast'}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -121,6 +159,24 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
   useEffect(() => {
     const loadStreams = async () => {
       try {
+        const probePlaybackUrl = async (url) => {
+          if (!url) return false
+          try {
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 4000)
+            const fetchUrl = url.includes('?') ? `${url}&_=${Date.now()}` : `${url}?_=${Date.now()}`
+            const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
+            clearTimeout(timeoutId)
+            if (!res.ok) return false
+            const text = await res.text()
+            if (!text || !text.includes('#EXTM3U')) return false
+            // Live manifests should NOT contain an ENDLIST tag.
+            return !text.includes('#EXT-X-ENDLIST')
+          } catch (e) {
+            return false
+          }
+        }
+
         // Fetch all active streams
         let query = supabase
           .from('icepulse_streams')
@@ -132,7 +188,6 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
               icepulse_organizations (id, name, header_image_url)
             )
           `)
-          .eq('is_active', true)
           .order('created_at', { ascending: false })
         
         if (gameId) {
@@ -146,8 +201,15 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
           return
         }
 
-        // Only show active live streams (no time cutoff to avoid hiding long games)
-        const liveOnly = (data || []).filter((stream) => stream?.is_active)
+        const liveFlags = await Promise.all(
+          (data || []).map(async (stream) => {
+            if (stream?.is_active) return true
+            return probePlaybackUrl(stream?.cloudflare_playback_url)
+          })
+        )
+
+        // Only show streams that are actually live (active flag or playable manifest)
+        const liveOnly = (data || []).filter((stream, idx) => liveFlags[idx])
 
         // Filter by organization if resolvedOrgId is provided
         const filteredStreams = resolvedOrgId

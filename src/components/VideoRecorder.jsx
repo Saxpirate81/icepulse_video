@@ -497,6 +497,43 @@ function VideoRecorder() {
     return /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
   }
 
+  const openLarixApp = () => {
+    const storeLink = getLarixStoreLink()
+    const fallbackTimer = setTimeout(() => {
+      window.open(storeLink, '_blank')
+    }, 1200)
+
+    // Try Larix URL scheme (best effort)
+    window.location.href = 'larixbroadcaster://'
+
+    // Clear fallback if app opens
+    setTimeout(() => clearTimeout(fallbackTimer), 2000)
+  }
+
+  const openStreamlabsApp = () => {
+    const downloadUrl = 'https://streamlabs.com/streamlabs-desktop'
+    const fallbackTimer = setTimeout(() => {
+      window.open(downloadUrl, '_blank')
+    }, 1200)
+
+    // Try Streamlabs URL scheme (best effort)
+    window.location.href = 'streamlabs://'
+
+    setTimeout(() => clearTimeout(fallbackTimer), 2000)
+  }
+
+  const setStreamActiveFlag = async (id, isActive) => {
+    if (!id) return
+    try {
+      await supabase
+        .from('icepulse_streams')
+        .update({ is_active: isActive })
+        .eq('id', id)
+    } catch (err) {
+      console.warn('⚠️ Could not update stream active flag:', err)
+    }
+  }
+
   const copyTextToClipboard = async (text) => {
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -526,7 +563,7 @@ function VideoRecorder() {
     return manualCopy !== null
   }
 
-  const applyStreamData = (streamData, gameId) => {
+  const applyStreamData = async (streamData, gameId) => {
     if (!streamData?.id) return
     setStreamId(streamData.id)
     setStreamUrl(`${window.location.origin}/game/${gameId}/streams`)
@@ -540,6 +577,9 @@ function VideoRecorder() {
       setRtmpsKey(streamData.rtmpsKey)
       setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
     }
+    if (!isMobileDevice()) {
+      await setStreamActiveFlag(streamData.id, true)
+    }
   }
 
   const ensureStreamForLiveToggle = async () => {
@@ -549,8 +589,10 @@ function VideoRecorder() {
     if (rtmpsKey) return
     setIsCreatingStream(true)
     try {
-      const streamData = await createStream(gameId)
-      applyStreamData(streamData, gameId)
+      const streamData = await createStream(gameId, null, {
+        forceActive: !isMobileDevice()
+      })
+      await applyStreamData(streamData, gameId)
     } catch (err) {
       console.error('❌ Error creating stream on toggle:', err)
       setError(`Stream creation failed: ${err.message}. You can still record locally.`)
@@ -1434,7 +1476,9 @@ function VideoRecorder() {
         try {
            const gameId = currentGameIdRef.current || selectedGameId
            console.log('🔄 Creating/reactivating live stream for game:', gameId, streamIdToResume ? '(resuming)' : '(new)')
-           const streamData = await createStream(gameId, streamIdToResume)
+           const streamData = await createStream(gameId, streamIdToResume, {
+             forceActive: !isMobileDevice()
+           })
                if (streamData) {
                setStreamId(streamData.id)
                // Use the game stream hub URL (shows all active streams for this game)
@@ -1449,6 +1493,9 @@ function VideoRecorder() {
             if (streamData.rtmpsKey) {
               setRtmpsKey(streamData.rtmpsKey)
               setRtmpsUrl(streamData.rtmpsUrl || 'rtmps://global-live.mux.com:443/app')
+            }
+            if (!isMobileDevice()) {
+              await setStreamActiveFlag(streamData.id, true)
             }
             // Clear recently stopped stream since we're resuming
              if (streamIdToResume) {
@@ -2491,9 +2538,35 @@ function VideoRecorder() {
                         Mux RTMPS (Use Larix/OBS)
                       </label>
                       <p className="text-xs text-emerald-200/80">
-                        Use the Larix popup to copy the combined URL for easier setup.
+                        Paste the combined URL into your broadcaster app.
                       </p>
                     </div>
+                    {!isMobileDevice() && (
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <button
+                          onClick={async () => {
+                            const baseUrl = rtmpsUrl || 'rtmps://global-live.mux.com:443/app'
+                            const combined = baseUrl.endsWith('/')
+                              ? `${baseUrl}${rtmpsKey}`
+                              : `${baseUrl}/${rtmpsKey}`
+                            const didCopy = await copyTextToClipboard(combined)
+                            if (didCopy) {
+                              setRtmpsComboCopied(true)
+                              setTimeout(() => setRtmpsComboCopied(false), 2000)
+                            }
+                          }}
+                          className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded-lg font-semibold transition-colors"
+                        >
+                          {rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
+                        </button>
+                        <button
+                          onClick={openStreamlabsApp}
+                          className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors"
+                        >
+                          Open Streamlabs
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2581,7 +2654,11 @@ function VideoRecorder() {
                     {isCreatingStream ? 'Generating...' : rtmpsComboCopied ? 'Copied!' : 'Copy Broadcast ID'}
                   </button>
                   <button
-                    onClick={() => setShowLarixModal(false)}
+                    onClick={async () => {
+                      await setStreamActiveFlag(streamId, true)
+                      setShowLarixModal(false)
+                      openLarixApp()
+                    }}
                     disabled={!hasCopiedBroadcastId}
                     className="flex-1 px-4 py-3 rounded-lg font-semibold text-base transition-colors disabled:bg-gray-700 disabled:text-gray-400 bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed"
                   >
