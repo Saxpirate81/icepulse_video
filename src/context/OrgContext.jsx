@@ -1980,10 +1980,11 @@ export function OrgProvider({ children }) {
           
           if (stoppedAt > fiveMinutesAgo) {
             // Reactivate the stream
-            const { error: updateError } = await supabase
-              .from('icepulse_streams')
-              .update({ is_active: true })
-              .eq('id', resumeStreamId)
+        const shouldActivateNow = VIDEO_PROVIDER !== 'mux'
+        const { error: updateError } = await supabase
+          .from('icepulse_streams')
+          .update({ is_active: shouldActivateNow })
+          .eq('id', resumeStreamId)
 
             if (!updateError) {
               console.log('✅ [Cloudflare] Resumed stream:', resumeStreamId)
@@ -2014,9 +2015,10 @@ export function OrgProvider({ children }) {
 
       if (inactiveStream) {
         // Reactivate the inactive stream (reuse the same URL)
+        const shouldActivateNow = VIDEO_PROVIDER !== 'mux'
         const { error: updateError } = await supabase
           .from('icepulse_streams')
-          .update({ is_active: true })
+          .update({ is_active: shouldActivateNow })
           .eq('id', inactiveStream.id)
 
         if (!updateError) {
@@ -2056,7 +2058,8 @@ export function OrgProvider({ children }) {
           id: streamId,
           game_id: gameId,
           created_by: user.id,
-          is_active: true,
+          // Start inactive and let Mux webhook flip to active when broadcast starts.
+          is_active: false,
           cloudflare_live_input_id: liveInputId,
           cloudflare_stream_key: rtmpsKey,
           cloudflare_playback_url: playbackUrl,
