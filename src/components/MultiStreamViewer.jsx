@@ -239,11 +239,37 @@ function MultiStreamViewer({ organizationId, organizationName, gameId }) {
 
   if (streams.length === 0) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center text-white">
-        <div className="text-center">
-          <WifiOff className="w-20 h-20 mx-auto mb-4 text-gray-600" />
-          <h2 className="text-2xl font-bold mb-2">No Live Streams</h2>
-          <p className="text-gray-400">There are currently no active streams.</p>
+      <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-950 text-white">
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-black/60 backdrop-blur-lg border-b border-gray-800/70">
+          <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <img
+                src="/Logo.png"
+                alt="IcePulse Logo"
+                className="w-12 h-12 sm:w-14 sm:h-14 object-contain flex-shrink-0"
+                onError={(e) => {
+                  if (e.target.src.includes('Logo.png')) {
+                    e.target.src = '/logo.png'
+                    return
+                  }
+                  e.target.style.display = 'none'
+                }}
+              />
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-3xl font-bold tracking-tight">Live Streams</h1>
+                <p className="text-gray-400 text-sm">0 active streams</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center text-white px-4 py-10">
+          <div className="text-center">
+            <WifiOff className="w-20 h-20 mx-auto mb-4 text-gray-600" />
+            <h2 className="text-2xl font-bold mb-2">No Live Streams</h2>
+            <p className="text-gray-400">There are currently no active streams.</p>
+          </div>
         </div>
       </div>
     )

@@ -295,6 +295,27 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
       }
 
       if (isMuxStream && playbackUrl) {
+        const waitForMuxManifest = async () => {
+          const maxAttempts = 30
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (cancelled) return false
+            try {
+              const controller = new AbortController()
+              const timeoutId = setTimeout(() => controller.abort(), 4000)
+              const fetchUrl = playbackUrl.includes('?')
+                ? `${playbackUrl}&_=${Date.now()}`
+                : `${playbackUrl}?_=${Date.now()}`
+              const res = await fetch(fetchUrl, { method: 'GET', mode: 'cors', signal: controller.signal })
+              clearTimeout(timeoutId)
+              if (res.ok) return true
+            } catch (e) {
+              // ignore and retry
+            }
+            await new Promise(r => setTimeout(r, 2000))
+          }
+          return false
+        }
+
         // Mux HLS playback: avoid polling/Cloudflare flow, just attach directly.
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = playbackUrl
@@ -345,6 +366,12 @@ function StreamViewer({ streamId, isPreview = false, isEmbedded = false }) {
           hlsRef.current = hls
           return
         }
+
+        const isReady = await waitForMuxManifest()
+        if (!isReady) {
+          scheduleRetry()
+        }
+        return
       }
 
       // Build list of candidate URLs to poll
